@@ -75,7 +75,8 @@ To this end, this provider supports the following extra specs schema:
         "enable_boot_debug": {
             "type": "boolean",
             "description": "Allows providers to set the -x flag in the runner install script."
-        }
+        },
+	    "additionalProperties": false
     }
 }
 ```
