@@ -34,9 +34,9 @@ const jsonSchema string = `
 			"enable_boot_debug": {
 				"type": "boolean",
 				"description": "Allows providers to set the -x flag in the runner install script."
-			},
-			"additionalProperties": false
-		}
+			}
+		},
+		"additionalProperties": false
 	}
 `
 

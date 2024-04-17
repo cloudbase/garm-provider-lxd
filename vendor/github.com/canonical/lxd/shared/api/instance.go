@@ -201,23 +201,13 @@ type InstanceRebuildPost struct {
 //
 // API extension: instances.
 type Instance struct {
-	InstancePut `yaml:",inline"`
-
-	// Instance creation timestamp
-	// Example: 2021-03-23T20:00:00-04:00
-	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
-
-	// Expanded configuration (all profiles and local config merged)
-	// Example: {"security.nesting": "true"}
-	ExpandedConfig map[string]string `json:"expanded_config,omitempty" yaml:"expanded_config,omitempty"`
-
-	// Expanded devices (all profiles and local devices merged)
-	// Example: {"root": {"type": "disk", "pool": "default", "path": "/"}}
-	ExpandedDevices map[string]map[string]string `json:"expanded_devices,omitempty" yaml:"expanded_devices,omitempty"`
-
 	// Instance name
 	// Example: foo
 	Name string `json:"name" yaml:"name"`
+
+	// Instance description
+	// Example: My test instance
+	Description string `json:"description" yaml:"description"`
 
 	// Instance status (see instance_state)
 	// Example: Running
@@ -226,6 +216,10 @@ type Instance struct {
 	// Instance status code (see instance_state)
 	// Example: 101
 	StatusCode StatusCode `json:"status_code" yaml:"status_code"`
+
+	// Instance creation timestamp
+	// Example: 2021-03-23T20:00:00-04:00
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
 	// Last start timestamp
 	// Example: 2021-03-23T20:00:00-04:00
@@ -244,6 +238,38 @@ type Instance struct {
 	//
 	// API extension: instance_all_projects
 	Project string `json:"project" yaml:"project"`
+
+	// Architecture name
+	// Example: x86_64
+	Architecture string `json:"architecture" yaml:"architecture"`
+
+	// Whether the instance is ephemeral (deleted on shutdown)
+	// Example: false
+	Ephemeral bool `json:"ephemeral" yaml:"ephemeral"`
+
+	// Whether the instance currently has saved state on disk
+	// Example: false
+	Stateful bool `json:"stateful" yaml:"stateful"`
+
+	// List of profiles applied to the instance
+	// Example: ["default"]
+	Profiles []string `json:"profiles" yaml:"profiles"`
+
+	// Instance configuration (see doc/instances.md)
+	// Example: {"security.nesting": "true"}
+	Config map[string]string `json:"config" yaml:"config"`
+
+	// Instance devices (see doc/instances.md)
+	// Example: {"root": {"type": "disk", "pool": "default", "path": "/"}}
+	Devices map[string]map[string]string `json:"devices" yaml:"devices"`
+
+	// Expanded configuration (all profiles and local config merged)
+	// Example: {"security.nesting": "true"}
+	ExpandedConfig map[string]string `json:"expanded_config,omitempty" yaml:"expanded_config,omitempty"`
+
+	// Expanded devices (all profiles and local devices merged)
+	// Example: {"root": {"type": "disk", "pool": "default", "path": "/"}}
+	ExpandedDevices map[string]map[string]string `json:"expanded_devices,omitempty" yaml:"expanded_devices,omitempty"`
 }
 
 // InstanceFull is a combination of Instance, InstanceBackup, InstanceState and InstanceSnapshot.
@@ -268,7 +294,26 @@ type InstanceFull struct {
 //
 // API extension: instances.
 func (c *Instance) Writable() InstancePut {
-	return c.InstancePut
+	return InstancePut{
+		Architecture: c.Architecture,
+		Config:       c.Config,
+		Devices:      c.Devices,
+		Ephemeral:    c.Ephemeral,
+		Profiles:     c.Profiles,
+		Stateful:     c.Stateful,
+		Description:  c.Description,
+	}
+}
+
+// SetWritable sets applicable values from InstancePut struct to Instance struct.
+func (c *Instance) SetWritable(put InstancePut) {
+	c.Architecture = put.Architecture
+	c.Config = put.Config
+	c.Devices = put.Devices
+	c.Ephemeral = put.Ephemeral
+	c.Profiles = put.Profiles
+	c.Stateful = put.Stateful
+	c.Description = put.Description
 }
 
 // IsActive checks whether the instance state indicates the instance is active.
@@ -317,7 +362,7 @@ type InstanceSource struct {
 	Properties map[string]string `json:"properties,omitempty" yaml:"properties,omitempty"`
 
 	// Remote server URL (for remote images)
-	// Example: https://images.linuxcontainers.org
+	// Example: https://cloud-images.ubuntu.com/releases
 	Server string `json:"server,omitempty" yaml:"server,omitempty"`
 
 	// Remote server secret (for remote private images)
@@ -373,4 +418,37 @@ type InstanceSource struct {
 	//
 	// API extension: instance_allow_inconsistent_copy
 	AllowInconsistent bool `json:"allow_inconsistent" yaml:"allow_inconsistent"`
+}
+
+// InstanceUEFIVars represents the UEFI variables of a LXD virtual machine.
+//
+// swagger:model
+//
+// API extension: instances_uefi_vars.
+type InstanceUEFIVars struct {
+	// UEFI variables map
+	// Hashmap key format is <uefi-variable-name>-<UUID>
+	// Example: { "SecureBootEnable-f0a30bc7-af08-4556-99c4-001009c93a44": { "data": "01", "attr": 3 } }
+	Variables map[string]InstanceUEFIVariable `json:"variables" yaml:"variables"`
+}
+
+// InstanceUEFIVariable represents an EFI variable entry
+//
+// swagger:model
+//
+// API extension: instances_uefi_vars.
+type InstanceUEFIVariable struct {
+	// UEFI variable data (HEX-encoded)
+	// example: 01
+	Data string `json:"data" yaml:"data"`
+
+	// UEFI variable attributes
+	// example: 7
+	Attr uint32 `json:"attr" yaml:"attr"`
+
+	// UEFI variable timestamp (HEX-encoded)
+	Timestamp string `json:"timestamp" yaml:"timestamp"`
+
+	// UEFI variable digest (HEX-encoded)
+	Digest string `json:"digest" yaml:"digest"`
 }

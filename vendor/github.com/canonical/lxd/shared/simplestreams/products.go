@@ -10,8 +10,8 @@ import (
 	"github.com/canonical/lxd/shared/osarch"
 )
 
-var lxdCompatCombinedItems = []string{"lxd_combined.tar.gz", "incus_combined.tar.gz"}
-var lxdCompatItems = []string{"lxd.tar.xz", "incus.tar.xz"}
+var lxdCompatCombinedItems = []string{"lxd_combined.tar.gz"}
+var lxdCompatItems = []string{"lxd.tar.xz"}
 
 // Products represents the base of download.json.
 type Products struct {
@@ -248,12 +248,19 @@ func (s *Products) ToLXD() ([]api.Image, map[string][][]string) {
 							continue
 						}
 
-						srcFingerprint = item.LXDHashSha256SquashFs
+						// Take correct source image fingerprint based on
+						// delta file type.
+						if delta.FileType == "disk-kvm.img.vcdiff" {
+							srcFingerprint = item.LXDHashSha256DiskKvmImg
+						} else if delta.FileType == "squashfs.vcdiff" {
+							srcFingerprint = item.LXDHashSha256SquashFs
+						}
+
 						break
 					}
 
 					if srcFingerprint == "" {
-						// Couldn't find the image
+						// Couldn't find the source image
 						continue
 					}
 
@@ -279,8 +286,6 @@ func (s *Products) ToLXD() ([]api.Image, map[string][][]string) {
 					if err != nil {
 						continue
 					}
-
-					break // Stop at first compatible item found.
 				} else if shared.ValueInSlice(item.FileType, lxdCompatItems) {
 					// Locate the root files
 					for _, subItem := range version.Items {
@@ -291,8 +296,6 @@ func (s *Products) ToLXD() ([]api.Image, map[string][][]string) {
 							}
 						}
 					}
-
-					break // Stop at first compatible item found.
 				}
 			}
 		}
