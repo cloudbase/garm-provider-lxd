@@ -6,6 +6,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,7 +84,7 @@ func TestLXDWithInvalidUnixSocket(t *testing.T) {
 	cfg.UnixSocket = "bogus unix socket"
 	err := cfg.Validate()
 	require.NotNil(t, err)
-	require.EqualError(t, err, "could not access unix socket bogus unix socket: \"CreateFile bogus unix socket: The system cannot find the file specified.\"")
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestMissingUnixSocketAndMissingURL(t *testing.T) {
@@ -134,14 +135,14 @@ func TestLXDIvalidCertOrKeyPaths(t *testing.T) {
 	cfg.ClientCertificate = "/i/am/not/here"
 	err := cfg.Validate()
 	require.NotNil(t, err)
-	require.EqualError(t, err, "failed to access client certificate /i/am/not/here: \"CreateFile /i/am/not/here: The system cannot find the path specified.\"")
+	require.ErrorIs(t, err, os.ErrNotExist)
 
 	cfg.ClientCertificate = "../testdata/lxd/certs/client.crt"
 	cfg.ClientKey = "/me/neither"
 
 	err = cfg.Validate()
 	require.NotNil(t, err)
-	require.EqualError(t, err, "failed to access client key /me/neither: \"CreateFile /me/neither: The system cannot find the path specified.\"")
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestLXDInvalidServerCertPath(t *testing.T) {
@@ -150,7 +151,7 @@ func TestLXDInvalidServerCertPath(t *testing.T) {
 
 	err := cfg.Validate()
 	require.NotNil(t, err)
-	require.EqualError(t, err, "failed to access tls_server_certificate /not/a/valid/server/cert/path: \"CreateFile /not/a/valid/server/cert/path: The system cannot find the path specified.\"")
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestInvalidLXDImageRemotes(t *testing.T) {
