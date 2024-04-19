@@ -209,3 +209,7 @@ func (l *LXD) waitInstanceHasIP(ctx context.Context, instanceName string) (commo
 
 	return p, nil
 }
+
+func ptr[T any](v T) *T {
+	return &v
+}

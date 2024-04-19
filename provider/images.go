@@ -12,7 +12,6 @@ import (
 	runnerErrors "github.com/cloudbase/garm-provider-common/errors"
 	"github.com/cloudbase/garm-provider-lxd/config"
 
-	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/pkg/errors"
 )
@@ -37,7 +36,7 @@ func (i *image) parseImageName(imageName string) (config.LXDImageRemote, string,
 	return config.LXDImageRemote{}, "", fmt.Errorf("could not find %s in %v: %w", imageName, i.remotes, runnerErrors.ErrNotFound)
 }
 
-func (i *image) getLocalImageByAlias(imageName string, imageType config.LXDImageType, arch string, cli lxd.InstanceServer) (*api.Image, error) {
+func (i *image) getLocalImageByAlias(imageName string, imageType config.LXDImageType, arch string, cli InstanceServerInterface) (*api.Image, error) {
 	aliases, err := cli.GetImageAliasArchitectures(imageType.String(), imageName)
 	if err != nil {
 		return nil, errors.Wrapf(err, "resolving alias: %s", imageName)
@@ -55,7 +54,7 @@ func (i *image) getLocalImageByAlias(imageName string, imageType config.LXDImage
 	return image, nil
 }
 
-func (i *image) getInstanceSource(imageName string, imageType config.LXDImageType, arch string, cli lxd.InstanceServer) (api.InstanceSource, error) {
+func (i *image) getInstanceSource(imageName string, imageType config.LXDImageType, arch string, cli InstanceServerInterface) (api.InstanceSource, error) {
 	instanceSource := api.InstanceSource{
 		Type: "image",
 	}

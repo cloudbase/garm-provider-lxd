@@ -124,6 +124,15 @@ type CertInfo struct {
 	crl     *x509.RevocationList
 }
 
+// NewCertInfo returns a CertInfo struct populated with the given TLS certificate information.
+func NewCertInfo(keypair tls.Certificate, ca *x509.Certificate, crl *x509.RevocationList) *CertInfo {
+	return &CertInfo{
+		keypair: keypair,
+		ca:      ca,
+		crl:     crl,
+	}
+}
+
 // KeyPair returns the public/private key pair.
 func (c *CertInfo) KeyPair() tls.Certificate {
 	return c.keypair
@@ -520,11 +529,9 @@ func GenerateTrustCertificate(cert *CertInfo, name string) (*api.Certificate, er
 
 	certificate := base64.StdEncoding.EncodeToString(block.Bytes)
 	apiCert := api.Certificate{
-		CertificatePut: api.CertificatePut{
-			Certificate: certificate,
-			Name:        name,
-			Type:        api.CertificateTypeServer, // Server type for intra-member communication.
-		},
+		Name:        name,
+		Type:        api.CertificateTypeServer, // Server type for intra-member communication.
+		Certificate: certificate,
 		Fingerprint: fingerprint,
 	}
 

@@ -62,6 +62,15 @@ const (
 	DefaultProjectName        = "garm-project"
 )
 
+type ToolFetchFunc func(osType commonParams.OSType, osArch commonParams.OSArch, tools []commonParams.RunnerApplicationDownload) (commonParams.RunnerApplicationDownload, error)
+
+type GetCloudConfigFunc func(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) (string, error)
+
+var (
+	DefaultToolFetch      ToolFetchFunc      = util.GetTools
+	DefaultGetCloudconfig GetCloudConfigFunc = cloudconfig.GetCloudConfig
+)
+
 func NewLXDProvider(configFile, controllerID string) (execution.ExternalProvider, error) {
 	cfg, err := config.NewConfig(configFile)
 	if err != nil {
@@ -86,11 +95,24 @@ func NewLXDProvider(configFile, controllerID string) (execution.ExternalProvider
 	return provider, nil
 }
 
+type InstanceServerInterface interface {
+	GetImageAliasArchitectures(string, string) (map[string]*api.ImageAliasesEntry, error)
+	GetImage(fingerprint string) (*api.Image, string, error)
+	GetProject(name string) (*api.Project, string, error)
+	UseProject(name string) lxd.InstanceServer
+	GetProfileNames() ([]string, error)
+	CreateInstance(instance api.InstancesPost) (lxd.Operation, error)
+	UpdateInstanceState(name string, state api.InstanceStatePut, ETag string) (lxd.Operation, error)
+	GetInstanceFull(name string) (*api.InstanceFull, string, error)
+	DeleteInstance(name string) (lxd.Operation, error)
+	GetInstancesFull(instanceType api.InstanceType) ([]api.InstanceFull, error)
+}
+
 type LXD struct {
 	// cfg is the provider config for this provider.
 	cfg *config.LXD
 	// cli is the LXD client.
-	cli lxd.InstanceServer
+	cli InstanceServerInterface
 	// imageManager downloads images from remotes
 	imageManager *image
 	// controllerID is the ID of this controller
@@ -99,7 +121,7 @@ type LXD struct {
 	mux sync.Mutex
 }
 
-func (l *LXD) getCLI(ctx context.Context) (lxd.InstanceServer, error) {
+func (l *LXD) getCLI(ctx context.Context) (InstanceServerInterface, error) {
 	l.mux.Lock()
 	defer l.mux.Unlock()
 
@@ -178,7 +200,7 @@ func (l *LXD) getCreateInstanceArgs(ctx context.Context, bootstrapParams commonP
 		return api.InstancesPost{}, errors.Wrap(err, "getting instance source")
 	}
 
-	tools, err := util.GetTools(bootstrapParams.OSType, bootstrapParams.OSArch, bootstrapParams.Tools)
+	tools, err := DefaultToolFetch(bootstrapParams.OSType, bootstrapParams.OSArch, bootstrapParams.Tools)
 	if err != nil {
 		return api.InstancesPost{}, errors.Wrap(err, "getting tools")
 	}
@@ -186,7 +208,7 @@ func (l *LXD) getCreateInstanceArgs(ctx context.Context, bootstrapParams commonP
 	bootstrapParams.UserDataOptions.DisableUpdatesOnBoot = specs.DisableUpdates
 	bootstrapParams.UserDataOptions.ExtraPackages = specs.ExtraPackages
 	bootstrapParams.UserDataOptions.EnableBootDebug = specs.EnableBootDebug
-	cloudCfg, err := cloudconfig.GetCloudConfig(bootstrapParams, tools, bootstrapParams.Name)
+	cloudCfg, err := DefaultGetCloudconfig(bootstrapParams, tools, bootstrapParams.Name)
 	if err != nil {
 		return api.InstancesPost{}, errors.Wrap(err, "generating cloud-config")
 	}

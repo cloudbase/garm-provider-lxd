@@ -175,6 +175,8 @@ type InstanceServer interface {
 	UpdateInstances(state api.InstancesPut, ETag string) (op Operation, err error)
 	RebuildInstance(instanceName string, req api.InstanceRebuildPost) (op Operation, err error)
 	RebuildInstanceFromImage(source ImageServer, image api.Image, instanceName string, req api.InstanceRebuildPost) (op RemoteOperation, err error)
+	GetInstanceUEFIVars(name string) (instanceUEFI *api.InstanceUEFIVars, ETag string, err error)
+	UpdateInstanceUEFIVars(name string, instanceUEFI api.InstanceUEFIVars, ETag string) (err error)
 
 	ExecInstance(instanceName string, exec api.InstanceExecPost, args *InstanceExecArgs) (op Operation, err error)
 	ConsoleInstance(instanceName string, console api.InstanceConsolePost, args *InstanceConsoleArgs) (op Operation, err error)
@@ -356,6 +358,10 @@ type InstanceServer interface {
 	UpdateStoragePoolBucketKey(poolName string, bucketName string, keyName string, key api.StorageBucketKeyPut, ETag string) (err error)
 	DeleteStoragePoolBucketKey(poolName string, bucketName string, keyName string) (err error)
 
+	// List all volumes functions ("storage_volumes_all" API extension)
+	GetVolumesWithFilter(filters []string) (volumes []api.StorageVolume, err error)
+	GetVolumesWithFilterAllProjects(filters []string) (volumes []api.StorageVolume, err error)
+
 	// Storage volume functions ("storage" API extension)
 	GetStoragePoolVolumeNames(pool string) (names []string, err error)
 	GetStoragePoolVolumeNamesAllProjects(pool string) (names map[string][]string, err error)
@@ -422,6 +428,31 @@ type InstanceServer interface {
 	GetWarning(UUID string) (warning *api.Warning, ETag string, err error)
 	UpdateWarning(UUID string, warning api.WarningPut, ETag string) (err error)
 	DeleteWarning(UUID string) (err error)
+
+	// Authorization functions
+	GetAuthGroupNames() (groupNames []string, err error)
+	GetAuthGroups() (groups []api.AuthGroup, err error)
+	GetAuthGroup(groupName string) (group *api.AuthGroup, ETag string, err error)
+	CreateAuthGroup(groupsPost api.AuthGroupsPost) error
+	UpdateAuthGroup(groupName string, groupPut api.AuthGroupPut, ETag string) error
+	RenameAuthGroup(groupName string, groupPost api.AuthGroupPost) error
+	DeleteAuthGroup(groupName string) error
+	GetIdentityAuthenticationMethodsIdentifiers() (authMethodsIdentifiers map[string][]string, err error)
+	GetIdentityIdentifiersByAuthenticationMethod(authenticationMethod string) (identifiers []string, err error)
+	GetIdentities() (identities []api.Identity, err error)
+	GetIdentitiesByAuthenticationMethod(authenticationMethod string) (identities []api.Identity, err error)
+	GetIdentity(authenticationMethod string, nameOrIdentifier string) (identity *api.Identity, ETag string, err error)
+	GetCurrentIdentityInfo() (identityInfo *api.IdentityInfo, ETag string, err error)
+	UpdateIdentity(authenticationMethod string, nameOrIdentifier string, identityPut api.IdentityPut, ETag string) error
+	GetIdentityProviderGroupNames() (identityProviderGroupNames []string, err error)
+	GetIdentityProviderGroups() (identityProviderGroups []api.IdentityProviderGroup, err error)
+	GetIdentityProviderGroup(identityProviderGroupName string) (identityProviderGroup *api.IdentityProviderGroup, ETag string, err error)
+	CreateIdentityProviderGroup(identityProviderGroup api.IdentityProviderGroup) error
+	UpdateIdentityProviderGroup(identityProviderGroupName string, identityProviderGroupPut api.IdentityProviderGroupPut, ETag string) error
+	RenameIdentityProviderGroup(identityProviderGroupName string, identityProviderGroupPost api.IdentityProviderGroupPost) error
+	DeleteIdentityProviderGroup(identityProviderGroupName string) error
+	GetPermissions(args GetPermissionsArgs) (permissions []api.Permission, err error)
+	GetPermissionsInfo(args GetPermissionsArgs) (permissions []api.PermissionInfo, err error)
 
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data any, queryETag string) (resp *api.Response, ETag string, err error)
@@ -582,6 +613,9 @@ type InstanceBackupArgs struct {
 
 	// Name to import backup as
 	Name string
+
+	// If set, it would override devices
+	Devices map[string]map[string]string
 }
 
 // The InstanceCopyArgs struct is used to pass additional options during instance copy.
@@ -669,6 +703,12 @@ type InstanceFileArgs struct {
 	// File permissions
 	Mode int
 
+	// Whether to modify the permissions of existing files (see the
+	// instances_files_modify_permissions api extension)
+	GIDModifyExisting  bool
+	UIDModifyExisting  bool
+	ModeModifyExisting bool
+
 	// File type (file or directory)
 	Type string
 
@@ -692,4 +732,16 @@ type InstanceFileResponse struct {
 
 	// If a directory, the list of files inside it
 	Entries []string
+}
+
+// GetPermissionsArgs is used in the call to GetPermissions to specify filtering behaviour.
+type GetPermissionsArgs struct {
+	// EntityType is the type of entity to filter against.
+	// If left unspecified, permissions will be returned for all entity types.
+	EntityType string
+
+	// ProjectName is the project to filter against.
+	// If the project name is specified, only permissions for resources in the given project will be returned and server
+	// level permissions will not be returned.
+	ProjectName string
 }
