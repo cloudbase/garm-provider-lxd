@@ -108,7 +108,7 @@ func getClientFromConfig(ctx context.Context, cfg *config.LXD) (cli lxd.Instance
 	}
 
 	if cfg.UnixSocket != "" {
-		return lxd.ConnectLXDUnixWithContext(ctx, cfg.UnixSocket, nil)
+		return lxd.ConnectLXDUnixWithContext(ctx, cfg.UnixSocket, &lxd.ConnectionArgs{SkipGetServer: true})
 	}
 
 	if cfg.URL == "" {
@@ -150,6 +150,7 @@ func getClientFromConfig(ctx context.Context, cfg *config.LXD) (cli lxd.Instance
 		TLSCA:         string(tlsCAContents),
 		TLSClientCert: string(clientCertContents),
 		TLSClientKey:  string(clientKeyContents),
+		SkipGetServer: true,
 	}
 
 	lxdCLI, err := lxd.ConnectLXD(cfg.URL, &connectArgs)
