@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"testing"
 
-	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm-provider-lxd/config"
@@ -178,55 +177,52 @@ func TestGetClientFromConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       *config.LXD
-		expected  lxd.InstanceServer
 		errString string
 	}{
 		{
 			name:      "nil config",
 			cfg:       nil,
-			expected:  nil,
 			errString: "no LXD configuration found",
 		},
 		{
 			name:      "empty config",
 			cfg:       &config.LXD{},
-			expected:  lxd.InstanceServer(nil),
-			errString: "",
+			errString: "no URL or UnixSocket specified",
 		},
 		{
 			name: "invalid TLSServerCert",
 			cfg: &config.LXD{
+				URL:           "https://localhost:8443",
 				ProjectName:   "test-project",
 				TLSServerCert: "bad-cert-path",
 			},
-			expected:  lxd.InstanceServer(nil),
 			errString: "reading TLSServerCert",
 		},
 		{
 			name: "invalid TLSCA",
 			cfg: &config.LXD{
+				URL:         "https://localhost:8443",
 				ProjectName: "test-project",
 				TLSCA:       "bad-TLSA-path",
 			},
-			expected:  lxd.InstanceServer(nil),
 			errString: "reading TLSCA",
 		},
 		{
 			name: "invalid ClientCertificate",
 			cfg: &config.LXD{
+				URL:               "https://localhost:8443",
 				ProjectName:       "test-project",
 				ClientCertificate: "bad-cert-path",
 			},
-			expected:  lxd.InstanceServer(nil),
 			errString: "reading ClientCertificate",
 		},
 		{
 			name: "invalid ClientKey",
 			cfg: &config.LXD{
+				URL:         "https://localhost:8443",
 				ProjectName: "test-project",
 				ClientKey:   "bad-key-path",
 			},
-			expected:  lxd.InstanceServer(nil),
 			errString: "reading ClientKey",
 		},
 		{
@@ -234,7 +230,6 @@ func TestGetClientFromConfig(t *testing.T) {
 			cfg: &config.LXD{
 				UnixSocket: "/var/snap/lxd/common/lxd/unix.socket",
 			},
-			expected:  lxd.InstanceServer(nil),
 			errString: "",
 		},
 	}
@@ -242,8 +237,13 @@ func TestGetClientFromConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := getClientFromConfig(ctx, tt.cfg)
-			assert.Equal(t, got, tt.expected)
-			assert.ErrorContains(t, err, tt.errString)
+			if tt.errString != "" {
+				assert.Nil(t, got)
+				assert.ErrorContains(t, err, tt.errString)
+			} else {
+				assert.Nil(t, err)
+				assert.NotNil(t, got)
+			}
 		})
 	}
 }
