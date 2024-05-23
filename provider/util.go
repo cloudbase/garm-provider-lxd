@@ -111,6 +111,10 @@ func getClientFromConfig(ctx context.Context, cfg *config.LXD) (cli lxd.Instance
 		return lxd.ConnectLXDUnixWithContext(ctx, cfg.UnixSocket, nil)
 	}
 
+	if cfg.URL == "" {
+		return nil, fmt.Errorf("no URL or UnixSocket specified")
+	}
+
 	var srvCrtContents, tlsCAContents, clientCertContents, clientKeyContents []byte
 
 	if cfg.TLSServerCert != "" {

@@ -69,7 +69,7 @@ type ServerEnvironment struct {
 	OSName string `json:"os_name" yaml:"os_name"`
 
 	// Version of the operating system (Linux distribution)
-	// Example: 22.04
+	// Example: 24.04
 	//
 	// API extension: api_os
 	OSVersion string `json:"os_version" yaml:"os_version"`
@@ -157,8 +157,8 @@ type ServerStorageDriverInfo struct {
 // swagger:model
 type ServerPut struct {
 	// Server configuration map (refer to doc/server.md)
-	// Example: {"core.https_address": ":8443", "core.trust_password": true}
-	Config map[string]any `json:"config" yaml:"config"`
+	// Example: {"core.https_address": ":8443", "core.trust_password": "xyz"}
+	Config map[string]string `json:"config" yaml:"config"`
 }
 
 // ServerUntrusted represents a LXD server for an untrusted client
