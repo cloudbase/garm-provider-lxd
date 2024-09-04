@@ -12,7 +12,7 @@ import (
 	"time"
 
 	runnerErrors "github.com/cloudbase/garm-provider-common/errors"
-	"github.com/cloudbase/garm-provider-common/execution"
+	execution "github.com/cloudbase/garm-provider-common/execution/v0.1.0"
 	"github.com/cloudbase/garm-provider-lxd/config"
 
 	lxd "github.com/canonical/lxd/client"
@@ -25,6 +25,8 @@ import (
 )
 
 var _ execution.ExternalProvider = &LXD{}
+
+var Version = "v0.0.0-unknown"
 
 const (
 	// We look for this key in the config of the instances to determine if they are
@@ -482,4 +484,9 @@ func (l *LXD) Stop(ctx context.Context, instance string, force bool) error {
 // Start boots up an instance.
 func (l *LXD) Start(ctx context.Context, instance string) error {
 	return l.setState(ctx, instance, "start", false)
+}
+
+// GetVersion returns the interface version of the provider.
+func (l *LXD) GetVersion(ctx context.Context) string {
+	return Version
 }
