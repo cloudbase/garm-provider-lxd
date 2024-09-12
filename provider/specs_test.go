@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,12 +71,19 @@ func TestParseExtraSpecsFromBootstrapParams(t *testing.T) {
 		{
 			name: "full specs",
 			bootstrapParams: commonParams.BootstrapInstance{
-				ExtraSpecs: []byte(`{"disable_updates": true, "extra_packages": ["package1", "package2"], "enable_boot_debug": true}`),
+				ExtraSpecs: []byte(`{"disable_updates": true, "extra_packages": ["package1", "package2"], "enable_boot_debug": true, "runner_install_template": "IyEvYmluL2Jhc2gKZWNobyBJbnN0YWxsaW5nIHJ1bm5lci4uLg==", "pre_install_scripts": {"setup.sh": "IyEvYmluL2Jhc2gKZWNobyBTZXR1cCBzY3JpcHQuLi4="}, "extra_context": {"key": "value"}}`),
 			},
 			expectedOutput: extraSpecs{
 				DisableUpdates:  true,
 				ExtraPackages:   []string{"package1", "package2"},
 				EnableBootDebug: true,
+				CloudConfigSpec: cloudconfig.CloudConfigSpec{
+					RunnerInstallTemplate: []byte("#!/bin/bash\necho Installing runner..."),
+					PreInstallScripts: map[string][]byte{
+						"setup.sh": []byte("#!/bin/bash\necho Setup script..."),
+					},
+					ExtraContext: map[string]string{"key": "value"},
+				},
 			},
 			errString: "",
 		},

@@ -7,13 +7,20 @@ toolchain go1.22.1
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/canonical/lxd v0.0.0-20240523084630-b0acaf2c63a0
-	github.com/cloudbase/garm-provider-common v0.1.4-0.20240906095211-57315d4ac8ae
+	github.com/cloudbase/garm-provider-common v0.1.4-0.20240912084949-899c120c80ce
 	github.com/gorilla/websocket v1.5.4-0.20240702125206-a62d9d2a8413
 	github.com/juju/clock v1.0.3
 	github.com/juju/retry v1.0.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
 	github.com/xeipuuv/gojsonschema v1.2.0
+)
+
+require (
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 )
 
 require (
@@ -24,6 +31,7 @@ require (
 	github.com/gorilla/handlers v1.5.2 // indirect
 	github.com/gorilla/schema v1.3.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
+	github.com/invopop/jsonschema v0.12.0
 	github.com/juju/errors v1.0.0 // indirect
 	github.com/juju/testing v1.0.2 // indirect
 	github.com/kr/fs v0.1.0 // indirect
