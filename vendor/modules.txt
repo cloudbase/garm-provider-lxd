@@ -23,7 +23,7 @@ github.com/canonical/lxd/shared/tcp
 github.com/canonical/lxd/shared/termios
 github.com/canonical/lxd/shared/units
 github.com/canonical/lxd/shared/ws
-# github.com/cloudbase/garm-provider-common v0.1.4-0.20240912084949-899c120c80ce
+# github.com/cloudbase/garm-provider-common v0.1.4-0.20241026163040-5b7633dfb896
 ## explicit; go 1.22
 github.com/cloudbase/garm-provider-common/cloudconfig
 github.com/cloudbase/garm-provider-common/defaults
