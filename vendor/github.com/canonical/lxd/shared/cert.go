@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -28,6 +29,18 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 )
+
+// CertOptions holds configuration for creating a new CertInfo.
+type CertOptions struct {
+	// AddHosts determines whether to populate the Subject Alternative Name DNS Names and IP Addresses fields.
+	AddHosts bool
+
+	// CommonName will be used in place of the system hostname for the SAN DNS Name and Issuer Common Name.
+	CommonName string
+
+	// SubjectAlternativeNames contains other names to include in the SAN DNS name field in addition to CommonName.
+	SubjectAlternativeNames []string
+}
 
 // KeyPairAndCA returns a CertInfo object with a reference to the key pair and
 // (optionally) CA certificate located in the given directory and having the
@@ -45,13 +58,13 @@ import (
 //
 // If a CA certificate is found, it will be returned as well as second return
 // value (otherwise it will be nil).
-func KeyPairAndCA(dir, prefix string, kind CertKind, addHosts bool) (*CertInfo, error) {
+func KeyPairAndCA(dir, prefix string, kind CertKind, options CertOptions) (*CertInfo, error) {
 	certFilename := filepath.Join(dir, prefix+".crt")
 	keyFilename := filepath.Join(dir, prefix+".key")
 
 	// Ensure that the certificate exists, or create a new one if it does
 	// not.
-	err := FindOrGenCert(certFilename, keyFilename, kind == CertClient, addHosts)
+	err := FindOrGenCert(certFilename, keyFilename, kind == CertClient, options)
 	if err != nil {
 		return nil, err
 	}
@@ -236,30 +249,37 @@ func TestingAltKeyPair() *CertInfo {
 	return cert
 }
 
-/*
- * Generate a list of names for which the certificate will be valid.
- * This will include the hostname and ip address.
- */
-func mynames() ([]string, error) {
-	h, err := os.Hostname()
-	if err != nil {
-		return nil, err
+// generateSANNames creates a list of names for which the certificate will be valid.
+// - `commonName` will be the first entry if defined, otherwise the hostname will be used.
+// - `additionalNames` will be supplied next, if defined
+// - Finally, the localhost IPs will be added.
+func generateSANNames(commonName string, additionalNames ...string) ([]string, error) {
+	if commonName == "" {
+		h, err := os.Hostname()
+		if err != nil {
+			return nil, err
+		}
+
+		commonName = h
 	}
 
-	ret := []string{h, "127.0.0.1/8", "::1/128"}
-	return ret, nil
+	names := []string{commonName}
+	names = append(names, additionalNames...)
+	names = append(names, "127.0.0.1/8", "::1/128")
+
+	return names, nil
 }
 
 // FindOrGenCert generates a keypair if needed.
 // The type argument is false for server, true for client.
-func FindOrGenCert(certf string, keyf string, certtype bool, addHosts bool) error {
+func FindOrGenCert(certf string, keyf string, certtype bool, options CertOptions) error {
 	if PathExists(certf) && PathExists(keyf) {
 		return nil
 	}
 
 	/* If neither stat succeeded, then this is our first run and we
 	 * need to generate cert and privkey */
-	err := GenCert(certf, keyf, certtype, addHosts)
+	err := GenCert(certf, keyf, certtype, options)
 	if err != nil {
 		return err
 	}
@@ -268,7 +288,7 @@ func FindOrGenCert(certf string, keyf string, certtype bool, addHosts bool) erro
 }
 
 // GenCert will create and populate a certificate file and a key file.
-func GenCert(certf string, keyf string, certtype bool, addHosts bool) error {
+func GenCert(certf string, keyf string, certtype bool, options CertOptions) error {
 	/* Create the basenames if needed */
 	dir := filepath.Dir(certf)
 	err := os.MkdirAll(dir, 0750)
@@ -282,7 +302,7 @@ func GenCert(certf string, keyf string, certtype bool, addHosts bool) error {
 		return err
 	}
 
-	certBytes, keyBytes, err := GenerateMemCert(certtype, addHosts)
+	certBytes, keyBytes, err := GenerateMemCert(certtype, options)
 	if err != nil {
 		return err
 	}
@@ -322,13 +342,13 @@ func GenCert(certf string, keyf string, certtype bool, addHosts bool) error {
 
 // GenerateMemCert creates client or server certificate and key pair,
 // returning them as byte arrays in memory.
-func GenerateMemCert(client bool, addHosts bool) ([]byte, []byte, error) {
+func GenerateMemCert(client bool, options CertOptions) (cert []byte, key []byte, err error) {
 	privk, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Failed to generate key: %w", err)
 	}
 
-	validFrom := time.Now()
+	validFrom := time.Now().Add(-time.Minute)
 	validTo := validFrom.Add(10 * 365 * 24 * time.Hour)
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -348,16 +368,19 @@ func GenerateMemCert(client bool, addHosts bool) ([]byte, []byte, error) {
 		username = "UNKNOWN"
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "UNKNOWN"
+	hostname := options.CommonName
+	if hostname == "" {
+		hostname, err = os.Hostname()
+		if err != nil {
+			hostname = "UNKNOWN"
+		}
 	}
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{"LXD"},
-			CommonName:   fmt.Sprintf("%s@%s", username, hostname),
+			CommonName:   username + "@" + hostname,
 		},
 		NotBefore: validFrom,
 		NotAfter:  validTo,
@@ -372,8 +395,8 @@ func GenerateMemCert(client bool, addHosts bool) ([]byte, []byte, error) {
 		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 	}
 
-	if addHosts {
-		hosts, err := mynames()
+	if options.AddHosts {
+		hosts, err := generateSANNames(hostname, options.SubjectAlternativeNames...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Failed to get my hostname: %w", err)
 		}
@@ -402,34 +425,42 @@ func GenerateMemCert(client bool, addHosts bool) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	key := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: data})
+	cert = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	key = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: data})
 
 	return cert, key, nil
 }
 
+// ParseCert parse a X.509 certificate from the given byte slice and return its parsed content.
+func ParseCert(cert []byte) (*x509.Certificate, error) {
+	certBlock, _ := pem.Decode(cert)
+	if certBlock == nil {
+		return nil, errors.New("Invalid PEM block")
+	}
+
+	return x509.ParseCertificate(certBlock.Bytes)
+}
+
+// ReadCert reads a X.509 certificate from the filesystem, do PEM decoding and return its parsed content.
 func ReadCert(fpath string) (*x509.Certificate, error) {
 	cf, err := os.ReadFile(fpath)
 	if err != nil {
 		return nil, err
 	}
 
-	certBlock, _ := pem.Decode(cf)
-	if certBlock == nil {
-		return nil, fmt.Errorf("Invalid certificate file")
-	}
-
-	return x509.ParseCertificate(certBlock.Bytes)
+	return ParseCert(cf)
 }
 
+// CertFingerprint returns the SHA256 fingerprint of a X.509 certificate.
 func CertFingerprint(cert *x509.Certificate) string {
 	return fmt.Sprintf("%x", sha256.Sum256(cert.Raw))
 }
 
+// CertFingerprintStr returns the certificate fingerprint of a X.509 certificate provided as string.
 func CertFingerprintStr(c string) (string, error) {
 	pemCertificate, _ := pem.Decode([]byte(c))
 	if pemCertificate == nil {
-		return "", fmt.Errorf("invalid certificate")
+		return "", errors.New("invalid certificate")
 	}
 
 	cert, err := x509.ParseCertificate(pemCertificate.Bytes)
@@ -440,6 +471,7 @@ func CertFingerprintStr(c string) (string, error) {
 	return CertFingerprint(cert), nil
 }
 
+// GetRemoteCertificate returns the unverified peer certificate found at a remote address.
 func GetRemoteCertificate(address string, useragent string) (*x509.Certificate, error) {
 	// Setup a permissive TLS config
 	tlsConfig, err := GetTLSConfig(nil)
@@ -459,7 +491,7 @@ func GetRemoteCertificate(address string, useragent string) (*x509.Certificate, 
 	}
 
 	// Connect
-	req, err := http.NewRequest("GET", address, nil)
+	req, err := http.NewRequest(http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +508,7 @@ func GetRemoteCertificate(address string, useragent string) (*x509.Certificate, 
 
 	// Retrieve the certificate
 	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
-		return nil, fmt.Errorf("Unable to read remote TLS certificate")
+		return nil, errors.New("Unable to read remote TLS certificate")
 	}
 
 	return resp.TLS.PeerCertificates[0], nil
@@ -496,19 +528,19 @@ func CertificateTokenDecode(input string) (*api.CertificateAddToken, error) {
 	}
 
 	if j.ClientName == "" {
-		return nil, fmt.Errorf("No client name in certificate add token")
+		return nil, errors.New("No client name in certificate add token")
 	}
 
 	if len(j.Addresses) < 1 {
-		return nil, fmt.Errorf("No server addresses in certificate add token")
+		return nil, errors.New("No server addresses in certificate add token")
 	}
 
 	if j.Secret == "" {
-		return nil, fmt.Errorf("No secret in certificate add token")
+		return nil, errors.New("No secret in certificate add token")
 	}
 
 	if j.Fingerprint == "" {
-		return nil, fmt.Errorf("No certificate fingerprint in certificate add token")
+		return nil, errors.New("No certificate fingerprint in certificate add token")
 	}
 
 	return &j, nil
@@ -519,7 +551,7 @@ func CertificateTokenDecode(input string) (*api.CertificateAddToken, error) {
 func GenerateTrustCertificate(cert *CertInfo, name string) (*api.Certificate, error) {
 	block, _ := pem.Decode(cert.PublicKey())
 	if block == nil {
-		return nil, fmt.Errorf("Failed to decode certificate")
+		return nil, errors.New("Failed to decode certificate")
 	}
 
 	fingerprint, err := CertFingerprintStr(string(cert.PublicKey()))

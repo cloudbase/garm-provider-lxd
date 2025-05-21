@@ -73,11 +73,13 @@ type InstanceServer interface {
 	ImageServer
 
 	// Server functions
+	GetMetadataConfiguration() (metadataConfiguration *api.MetadataConfiguration, err error)
 	GetMetrics() (metrics string, err error)
 	GetServer() (server *api.Server, ETag string, err error)
 	GetServerResources() (resources *api.Resources, err error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
 	HasExtension(extension string) (exists bool)
+	CheckExtension(extension string) (err error)
 	RequireAuthenticated(authenticated bool)
 	IsClustered() (clustered bool)
 	UseTarget(name string) (client InstanceServer)
@@ -242,10 +244,13 @@ type InstanceServer interface {
 	UpdateImageAlias(name string, alias api.ImageAliasesEntryPut, ETag string) (err error)
 	RenameImageAlias(name string, alias api.ImageAliasesEntryPost) (err error)
 	DeleteImageAlias(name string) (err error)
+	GetImagesAllProjects() (images []api.Image, err error)
+	GetImagesAllProjectsWithFilter(filters []string) (images []api.Image, err error)
 
 	// Network functions ("network" API extension)
 	GetNetworkNames() (names []string, err error)
 	GetNetworks() (networks []api.Network, err error)
+	GetNetworksAllProjects() (networks []api.Network, err error)
 	GetNetwork(name string) (network *api.Network, ETag string, err error)
 	GetNetworkLeases(name string) (leases []api.NetworkLease, err error)
 	GetNetworkState(name string) (state *api.NetworkState, err error)
@@ -281,6 +286,7 @@ type InstanceServer interface {
 	// Network ACL functions ("network_acl" API extension)
 	GetNetworkACLNames() (names []string, err error)
 	GetNetworkACLs() (acls []api.NetworkACL, err error)
+	GetNetworkACLsAllProjects() (acls []api.NetworkACL, err error)
 	GetNetworkACL(name string) (acl *api.NetworkACL, ETag string, err error)
 	GetNetworkACLLogfile(name string) (log io.ReadCloser, err error)
 	CreateNetworkACL(acl api.NetworkACLsPost) (err error)
@@ -292,6 +298,7 @@ type InstanceServer interface {
 	GetNetworkAllocations(allProjects bool) (allocations []api.NetworkAllocations, err error)
 
 	// Network zone functions ("network_dns" API extension)
+	GetNetworkZonesAllProjects() (zones []api.NetworkZone, err error)
 	GetNetworkZoneNames() (names []string, err error)
 	GetNetworkZones() (zones []api.NetworkZone, err error)
 	GetNetworkZone(name string) (zone *api.NetworkZone, ETag string, err error)
@@ -317,6 +324,7 @@ type InstanceServer interface {
 	DeleteOperation(uuid string) (err error)
 
 	// Profile functions
+	GetProfilesAllProjects() (profiles []api.Profile, err error)
 	GetProfileNames() (names []string, err error)
 	GetProfiles() (profiles []api.Profile, err error)
 	GetProfile(name string) (profile *api.Profile, ETag string, err error)
@@ -346,6 +354,7 @@ type InstanceServer interface {
 
 	// Storage bucket functions ("storage_buckets" API extension)
 	GetStoragePoolBucketNames(poolName string) ([]string, error)
+	GetStoragePoolBucketsAllProjects(poolName string) ([]api.StorageBucket, error)
 	GetStoragePoolBuckets(poolName string) ([]api.StorageBucket, error)
 	GetStoragePoolBucket(poolName string, bucketName string) (bucket *api.StorageBucket, ETag string, err error)
 	CreateStoragePoolBucket(poolName string, bucket api.StorageBucketsPost) (*api.StorageBucketKey, error)
@@ -444,6 +453,9 @@ type InstanceServer interface {
 	GetIdentity(authenticationMethod string, nameOrIdentifier string) (identity *api.Identity, ETag string, err error)
 	GetCurrentIdentityInfo() (identityInfo *api.IdentityInfo, ETag string, err error)
 	UpdateIdentity(authenticationMethod string, nameOrIdentifier string, identityPut api.IdentityPut, ETag string) error
+	DeleteIdentity(authenticationMethod string, nameOrIdentifier string) error
+	CreateIdentityTLS(identitiesTLSPost api.IdentitiesTLSPost) error
+	CreateIdentityTLSToken(identitiesTLSPost api.IdentitiesTLSPost) (*api.CertificateAddToken, error)
 	GetIdentityProviderGroupNames() (identityProviderGroupNames []string, err error)
 	GetIdentityProviderGroups() (identityProviderGroups []api.IdentityProviderGroup, err error)
 	GetIdentityProviderGroup(identityProviderGroupName string) (identityProviderGroup *api.IdentityProviderGroup, ETag string, err error)
@@ -458,6 +470,38 @@ type InstanceServer interface {
 	RawQuery(method string, path string, data any, queryETag string) (resp *api.Response, ETag string, err error)
 	RawWebsocket(path string) (conn *websocket.Conn, err error)
 	RawOperation(method string, path string, data any, queryETag string) (op Operation, ETag string, err error)
+}
+
+// The DevLXDServer type represents a devLXD server.
+type DevLXDServer interface {
+	Server
+
+	// DevLXD info/state.
+	GetState() (state *api.DevLXDGet, err error)
+	UpdateState(state api.DevLXDPut) error
+
+	// DevLXD config.
+	GetConfig() (map[string]string, error)
+	GetConfigByKey(key string) (string, error)
+
+	// DevLXD metadata.
+	GetMetadata() (metadata string, err error)
+
+	// DevLXD devices.
+	GetDevices() (devices map[string]map[string]string, err error)
+
+	// DevLXD events.
+	GetEvents() (*EventListener, error)
+
+	// DevLXD images.
+	GetImageFile(fingerprint string, req ImageFileRequest) (resp *ImageFileResponse, err error)
+
+	// DevLXD Ubuntu Pro.
+	GetUbuntuPro() (*api.UbuntuProSettings, error)
+	CreateUbuntuProToken() (*api.UbuntuProGuestTokenResponse, error)
+
+	// Internal functions (for internal use)
+	RawQuery(method string, path string, data any, queryETag string) (resp *api.DevLXDResponse, ETag string, err error)
 }
 
 // The ConnectionInfo struct represents general information for a connection.
@@ -638,6 +682,10 @@ type InstanceCopyArgs struct {
 
 	// API extension: instance_allow_inconsistent_copy
 	AllowInconsistent bool
+
+	// API extension: override_snapshot_profiles_on_copy
+	// If set, snapshots of the instance copy receive profiles of the target instance
+	OverrideSnapshotProfiles bool
 }
 
 // The InstanceSnapshotCopyArgs struct is used to pass additional options during instance copy.

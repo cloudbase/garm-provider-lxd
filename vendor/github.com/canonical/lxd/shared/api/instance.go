@@ -6,13 +6,8 @@ import (
 )
 
 // GetParentAndSnapshotName returns the parent name, snapshot name, and whether it actually was a snapshot name.
-func GetParentAndSnapshotName(name string) (string, string, bool) {
-	fields := strings.SplitN(name, "/", 2)
-	if len(fields) == 1 {
-		return name, "", false
-	}
-
-	return fields[0], fields[1], true
+func GetParentAndSnapshotName(name string) (parentName string, snapshotName string, isSnapshot bool) {
+	return strings.Cut(name, "/")
 }
 
 // InstanceType represents the type if instance being returned or requested via the API.
@@ -26,6 +21,23 @@ const InstanceTypeContainer = InstanceType("container")
 
 // InstanceTypeVM defines the instance type value for a virtual-machine.
 const InstanceTypeVM = InstanceType("virtual-machine")
+
+const (
+	// SourceTypeMigration represents instance creation from migration.
+	SourceTypeMigration = "migration"
+
+	// SourceTypeConversion represents instance creation from conversion.
+	SourceTypeConversion = "conversion"
+
+	// SourceTypeImage represents instance creation from an image.
+	SourceTypeImage = "image"
+
+	// SourceTypeCopy represents instance creation from a copy operation.
+	SourceTypeCopy = "copy"
+
+	// SourceTypeNone represents an unknown source type for instance creation.
+	SourceTypeNone = "none"
+)
 
 // InstancesPost represents the fields available for a new LXD instance.
 //
@@ -49,6 +61,12 @@ type InstancesPost struct {
 	// Type (container or virtual-machine)
 	// Example: container
 	Type InstanceType `json:"type" yaml:"type"`
+
+	// Whether to start the instance after creation
+	// Example: true
+	//
+	// API extension: instance_create_start
+	Start bool `json:"start" yaml:"start"`
 }
 
 // InstancesPut represents the fields available for a mass update.
@@ -85,7 +103,9 @@ type InstancePost struct {
 
 	// Whether snapshots should be discarded (migration only, deprecated, use instance_only)
 	// Example: false
-	ContainerOnly bool `json:"container_only" yaml:"container_only"` // Deprecated, use InstanceOnly.
+	//
+	// Deprecated: use InstanceOnly.
+	ContainerOnly bool `json:"container_only" yaml:"container_only"`
 
 	// Target for the migration, will use pull mode if not set (migration only)
 	Target *InstancePostTarget `json:"target" yaml:"target"`
@@ -125,6 +145,12 @@ type InstancePost struct {
 	//
 	// API extension: instance_move_config
 	Profiles []string
+
+	// Whether the instances's snapshot should receive target instances profile on copy
+	// Example: true
+	//
+	// API extension: override_snapshot_profiles_on_copy
+	OverrideSnapshotProfiles bool `json:"override_snapshot_profiles" yaml:"override_snapshot_profiles"`
 }
 
 // InstancePostTarget represents the migration target host and operation.
@@ -201,6 +227,8 @@ type InstanceRebuildPost struct {
 //
 // API extension: instances.
 type Instance struct {
+	WithEntitlements `yaml:",inline"`
+
 	// Instance name
 	// Example: foo
 	Name string `json:"name" yaml:"name"`
@@ -362,7 +390,7 @@ type InstanceSource struct {
 	Properties map[string]string `json:"properties,omitempty" yaml:"properties,omitempty"`
 
 	// Remote server URL (for remote images)
-	// Example: https://cloud-images.ubuntu.com/releases
+	// Example: https://cloud-images.ubuntu.com/releases/
 	Server string `json:"server,omitempty" yaml:"server,omitempty"`
 
 	// Remote server secret (for remote private images)
@@ -403,7 +431,9 @@ type InstanceSource struct {
 
 	// Whether the copy should skip the snapshots (for copy, deprecated, use instance_only)
 	// Example: false
-	ContainerOnly bool `json:"container_only,omitempty" yaml:"container_only,omitempty"` // Deprecated, use InstanceOnly.
+	//
+	// Deprecated: Use InstanceOnly.
+	ContainerOnly bool `json:"container_only,omitempty" yaml:"container_only,omitempty"`
 
 	// Whether this is refreshing an existing instance (for migration and copy)
 	// Example: false
@@ -418,6 +448,25 @@ type InstanceSource struct {
 	//
 	// API extension: instance_allow_inconsistent_copy
 	AllowInconsistent bool `json:"allow_inconsistent" yaml:"allow_inconsistent"`
+
+	// Source disk size in bytes used to set the instance's volume size to accommodate the transferred root
+	// disk. This value is ignored if the root disk device has a size explicitly configured (for conversion).
+	// Example: 12345
+	//
+	// API extension: instance_import_conversion
+	SourceDiskSize int64 `json:"source_disk_size" yaml:"source_disk_size"`
+
+	// Optional list of options that are used during image conversion (for conversion).
+	// Example: ["format"]
+	//
+	// API extension: instance_import_conversion
+	ConversionOptions []string `json:"conversion_options" yaml:"conversion_options"`
+
+	// Whether the instances's snapshot should receive target instances profile on copy
+	// Example: true
+	//
+	// API extension: override_snapshot_profiles_on_copy
+	OverrideSnapshotProfiles bool `json:"override_snapshot_profiles" yaml:"override_snapshot_profiles"`
 }
 
 // InstanceUEFIVars represents the UEFI variables of a LXD virtual machine.

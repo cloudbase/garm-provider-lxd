@@ -55,7 +55,7 @@ tls_server_certificate = ""
     protocol = "simplestreams"
     skip_verify = false
     [image_remotes.images]
-    addr = "https://images.linuxcontainers.org"
+    addr = "https://images.lxd.canonical.com"
     public = true
     protocol = "simplestreams"
     skip_verify = false

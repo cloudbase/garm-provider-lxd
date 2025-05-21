@@ -82,11 +82,11 @@ type ClusterPut struct {
 	// API extension: clustering_join
 	ServerAddress string `json:"server_address" yaml:"server_address"`
 
-	// The trust password of the cluster you're trying to join
+	// The cluster join token for the cluster you're trying to join
 	// Example: blah
 	//
-	// API extension: clustering_join
-	ClusterPassword string `json:"cluster_password" yaml:"cluster_password"`
+	// API extension: explicit_trust_token
+	ClusterToken string `json:"cluster_token" yaml:"cluster_token"`
 }
 
 // ClusterMembersPost represents the fields required to request a join token to add a member to the cluster.
@@ -287,7 +287,7 @@ type ClusterMemberStatePost struct {
 	// Override the configured evacuation mode.
 	// Example: stop
 	//
-	// API extension: clustering_evacuate_mode
+	// API extension: clustering_evacuation_mode
 	Mode string `json:"mode" yaml:"mode"`
 }
 
@@ -321,6 +321,11 @@ type ClusterGroup struct {
 	// List of members in this group
 	// Example: ["node1", "node3"]
 	Members []string `json:"members" yaml:"members"`
+
+	// UsedBy is a list or LXD entity URLs that reference the cluster group.
+	//
+	// API extension: clustering_groups_used_by
+	UsedBy []string `json:"used_by" yaml:"used_by"`
 }
 
 // ClusterGroupPost represents the fields required to rename a cluster group.

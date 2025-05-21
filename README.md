@@ -33,7 +33,7 @@ The sample config file in this repository has the usual default ```LXD``` remote
 
 * <https://cloud-images.ubuntu.com/releases> (ubuntu) - Official Ubuntu images
 * <https://cloud-images.ubuntu.com/daily> (ubuntu_daily) - Official Ubuntu images, daily build
-* <https://images.linuxcontainers.org> (images) - Community maintained images for various operating systems
+* <https://images.lxd.canonical.com> (images) - Canonical maintained images for various operating systems
 
 When creating a new pool, you'll be able to specify which image you want to use. The images are referenced by ```remote_name:image_tag```. For example, if you want to launch a runner on an Ubuntu 20.04, the image name would be ```ubuntu:20.04```. For a daily image it would be ```ubuntu_daily:20.04```. And for one of the unofficial images it would be ```images:centos/8-Stream/cloud```. Note, for unofficial images you need to use the tags that have ```/cloud``` in the name. These images come pre-installed with ```cloud-init``` which we need to set up the runners automatically.
 

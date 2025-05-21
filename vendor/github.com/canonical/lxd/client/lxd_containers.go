@@ -2,10 +2,12 @@ package lxd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -20,15 +22,18 @@ import (
 
 // Container handling functions
 //
+//
 // Deprecated: Those functions are deprecated and won't be updated anymore.
 // Please use the equivalent Instance function instead.
 
 // GetContainerNames returns a list of container names.
+//
+// Deprecated: Use GetInstanceNames instead.
 func (r *ProtocolLXD) GetContainerNames() ([]string, error) {
 	// Fetch the raw URL values.
 	urls := []string{}
 	baseURL := "/containers"
-	_, err := r.queryStruct("GET", "/containers", nil, "", &urls)
+	_, err := r.queryStruct(http.MethodGet, "/containers", nil, "", &urls)
 	if err != nil {
 		return nil, err
 	}
@@ -38,11 +43,13 @@ func (r *ProtocolLXD) GetContainerNames() ([]string, error) {
 }
 
 // GetContainers returns a list of containers.
+//
+// Deprecated: Use GetInstances instead.
 func (r *ProtocolLXD) GetContainers() ([]api.Container, error) {
 	containers := []api.Container{}
 
 	// Fetch the raw value
-	_, err := r.queryStruct("GET", "/containers?recursion=1", nil, "", &containers)
+	_, err := r.queryStruct(http.MethodGet, "/containers?recursion=1", nil, "", &containers)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +58,8 @@ func (r *ProtocolLXD) GetContainers() ([]api.Container, error) {
 }
 
 // GetContainersFull returns a list of containers including snapshots, backups and state.
+//
+// Deprecated: Use GetInstancesFull instead.
 func (r *ProtocolLXD) GetContainersFull() ([]api.ContainerFull, error) {
 	containers := []api.ContainerFull{}
 
@@ -60,7 +69,7 @@ func (r *ProtocolLXD) GetContainersFull() ([]api.ContainerFull, error) {
 	}
 
 	// Fetch the raw value
-	_, err = r.queryStruct("GET", "/containers?recursion=2", nil, "", &containers)
+	_, err = r.queryStruct(http.MethodGet, "/containers?recursion=2", nil, "", &containers)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +78,13 @@ func (r *ProtocolLXD) GetContainersFull() ([]api.ContainerFull, error) {
 }
 
 // GetContainer returns the container entry for the provided name.
+//
+// Deprecated: Use GetInstance instead.
 func (r *ProtocolLXD) GetContainer(name string) (*api.Container, string, error) {
 	container := api.Container{}
 
 	// Fetch the raw value
-	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s", url.PathEscape(name)), nil, "", &container)
+	etag, err := r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(name), nil, "", &container)
 	if err != nil {
 		return nil, "", err
 	}
@@ -83,6 +94,8 @@ func (r *ProtocolLXD) GetContainer(name string) (*api.Container, string, error) 
 
 // CreateContainerFromBackup is a convenience function to make it easier to
 // create a container from a backup.
+//
+// Deprecated: Use CreateInstanceFromBackup instead.
 func (r *ProtocolLXD) CreateContainerFromBackup(args ContainerBackupArgs) (Operation, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -91,7 +104,7 @@ func (r *ProtocolLXD) CreateContainerFromBackup(args ContainerBackupArgs) (Opera
 
 	if args.PoolName == "" {
 		// Send the request
-		op, _, err := r.queryOperation("POST", "/containers", args.BackupFile, "", true)
+		op, _, err := r.queryOperation(http.MethodPost, "/containers", args.BackupFile, "", true)
 		if err != nil {
 			return nil, err
 		}
@@ -105,12 +118,12 @@ func (r *ProtocolLXD) CreateContainerFromBackup(args ContainerBackupArgs) (Opera
 	}
 
 	// Prepare the HTTP request
-	reqURL, err := r.setQueryAttributes(fmt.Sprintf("%s/1.0/containers", r.httpBaseURL.String()))
+	reqURL, err := r.setQueryAttributes(r.httpBaseURL.String() + "/1.0/containers")
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", reqURL, args.BackupFile)
+	req, err := http.NewRequest(http.MethodPost, reqURL, args.BackupFile)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +162,8 @@ func (r *ProtocolLXD) CreateContainerFromBackup(args ContainerBackupArgs) (Opera
 }
 
 // CreateContainer requests that LXD creates a new container.
+//
+// Deprecated: Use CreateInstance instead.
 func (r *ProtocolLXD) CreateContainer(container api.ContainersPost) (Operation, error) {
 	if container.Source.ContainerOnly {
 		err := r.CheckExtension("container_only_migration")
@@ -158,7 +173,7 @@ func (r *ProtocolLXD) CreateContainer(container api.ContainersPost) (Operation, 
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", "/containers", container, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers", container, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +183,7 @@ func (r *ProtocolLXD) CreateContainer(container api.ContainersPost) (Operation, 
 
 func (r *ProtocolLXD) tryCreateContainer(req api.ContainersPost, urls []string) (RemoteOperation, error) {
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("The source server isn't listening on the network")
+		return nil, errors.New("The source server isn't listening on the network")
 	}
 
 	rop := remoteOperation{
@@ -185,7 +200,7 @@ func (r *ProtocolLXD) tryCreateContainer(req api.ContainersPost, urls []string) 
 			if operation == "" {
 				req.Source.Server = serverURL
 			} else {
-				req.Source.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, url.PathEscape(operation))
+				req.Source.Operation = serverURL + "/1.0/operations/" + url.PathEscape(operation)
 			}
 
 			op, err := r.CreateContainer(req)
@@ -226,9 +241,11 @@ func (r *ProtocolLXD) tryCreateContainer(req api.ContainersPost, urls []string) 
 }
 
 // CreateContainerFromImage is a convenience function to make it easier to create a container from an existing image.
+//
+// Deprecated: Use CreateInstanceFromImage instead.
 func (r *ProtocolLXD) CreateContainerFromImage(source ImageServer, image api.Image, req api.ContainersPost) (RemoteOperation, error) {
 	// Set the minimal source fields
-	req.Source.Type = "image"
+	req.Source.Type = api.SourceTypeImage
 
 	// Optimization for the local image case
 	if r.isSameServer(source) {
@@ -289,6 +306,8 @@ func (r *ProtocolLXD) CreateContainerFromImage(source ImageServer, image api.Ima
 }
 
 // CopyContainer copies a container from a remote server. Additional options can be passed using ContainerCopyArgs.
+//
+// Deprecated: Use CopyInstance instead.
 func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Container, args *ContainerCopyArgs) (RemoteOperation, error) {
 	// Base request
 	req := api.ContainersPost{
@@ -303,35 +322,35 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 		// Quick checks.
 		if args.ContainerOnly {
 			if !r.HasExtension("container_only_migration") {
-				return nil, fmt.Errorf("The target server is missing the required \"container_only_migration\" API extension")
+				return nil, errors.New("The target server is missing the required \"container_only_migration\" API extension")
 			}
 
 			if !source.HasExtension("container_only_migration") {
-				return nil, fmt.Errorf("The source server is missing the required \"container_only_migration\" API extension")
+				return nil, errors.New("The source server is missing the required \"container_only_migration\" API extension")
 			}
 		}
 
 		if shared.ValueInSlice(args.Mode, []string{"push", "relay"}) {
 			if !r.HasExtension("container_push") {
-				return nil, fmt.Errorf("The target server is missing the required \"container_push\" API extension")
+				return nil, errors.New("The target server is missing the required \"container_push\" API extension")
 			}
 
 			if !source.HasExtension("container_push") {
-				return nil, fmt.Errorf("The source server is missing the required \"container_push\" API extension")
+				return nil, errors.New("The source server is missing the required \"container_push\" API extension")
 			}
 		}
 
 		if args.Mode == "push" && !source.HasExtension("container_push_target") {
-			return nil, fmt.Errorf("The source server is missing the required \"container_push_target\" API extension")
+			return nil, errors.New("The source server is missing the required \"container_push_target\" API extension")
 		}
 
 		if args.Refresh {
 			if !r.HasExtension("container_incremental_copy") {
-				return nil, fmt.Errorf("The target server is missing the required \"container_incremental_copy\" API extension")
+				return nil, errors.New("The target server is missing the required \"container_incremental_copy\" API extension")
 			}
 
 			if !source.HasExtension("container_incremental_copy") {
-				return nil, fmt.Errorf("The source server is missing the required \"container_incremental_copy\" API extension")
+				return nil, errors.New("The source server is missing the required \"container_incremental_copy\" API extension")
 			}
 		}
 
@@ -372,7 +391,7 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 		}
 
 		// Local copy source fields
-		req.Source.Type = "copy"
+		req.Source.Type = api.SourceTypeCopy
 		req.Source.Source = container.Name
 
 		// Copy the container
@@ -411,7 +430,7 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 		}
 
 		// Create the container
-		req.Source.Type = "migration"
+		req.Source.Type = api.SourceTypeMigration
 		req.Source.Mode = "push"
 		req.Source.Refresh = args.Refresh
 
@@ -424,7 +443,10 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 
 		targetSecrets := map[string]string{}
 		for k, v := range opAPI.Metadata {
-			targetSecrets[k] = v.(string)
+			value, ok := v.(string)
+			if ok {
+				targetSecrets[k] = value
+			}
 		}
 
 		// Prepare the source request
@@ -452,13 +474,16 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 
 	sourceSecrets := map[string]string{}
 	for k, v := range opAPI.Metadata {
-		sourceSecrets[k] = v.(string)
+		value, ok := v.(string)
+		if ok {
+			sourceSecrets[k] = value
+		}
 	}
 
 	// Relay mode migration
 	if args != nil && args.Mode == "relay" {
 		// Push copy source fields
-		req.Source.Type = "migration"
+		req.Source.Type = api.SourceTypeMigration
 		req.Source.Mode = "push"
 
 		// Start the process
@@ -472,7 +497,10 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 		// Extract the websockets
 		targetSecrets := map[string]string{}
 		for k, v := range targetOpAPI.Metadata {
-			targetSecrets[k] = v.(string)
+			value, ok := v.(string)
+			if ok {
+				targetSecrets[k] = value
+			}
 		}
 
 		// Launch the relay
@@ -497,7 +525,7 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 	}
 
 	// Pull mode migration
-	req.Source.Type = "migration"
+	req.Source.Type = api.SourceTypeMigration
 	req.Source.Mode = "pull"
 	req.Source.Operation = opAPI.ID
 	req.Source.Websockets = sourceSecrets
@@ -507,9 +535,11 @@ func (r *ProtocolLXD) CopyContainer(source InstanceServer, container api.Contain
 }
 
 // UpdateContainer updates the container definition.
+//
+// Deprecated: Use UpdateInstance instead.
 func (r *ProtocolLXD) UpdateContainer(name string, container api.ContainerPut, ETag string) (Operation, error) {
 	// Send the request
-	op, _, err := r.queryOperation("PUT", fmt.Sprintf("/containers/%s", url.PathEscape(name)), container, ETag, true)
+	op, _, err := r.queryOperation(http.MethodPut, "/containers/"+url.PathEscape(name), container, ETag, true)
 	if err != nil {
 		return nil, err
 	}
@@ -518,14 +548,16 @@ func (r *ProtocolLXD) UpdateContainer(name string, container api.ContainerPut, E
 }
 
 // RenameContainer requests that LXD renames the container.
+//
+// Deprecated: Use RenameInstance instead.
 func (r *ProtocolLXD) RenameContainer(name string, container api.ContainerPost) (Operation, error) {
 	// Quick check.
 	if container.Migration {
-		return nil, fmt.Errorf("Can't ask for a migration through RenameContainer")
+		return nil, errors.New("Can't ask for a migration through RenameContainer")
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s", url.PathEscape(name)), container, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(name), container, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +567,7 @@ func (r *ProtocolLXD) RenameContainer(name string, container api.ContainerPost) 
 
 func (r *ProtocolLXD) tryMigrateContainer(source InstanceServer, name string, req api.ContainerPost, urls []string) (RemoteOperation, error) {
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("The target server isn't listening on the network")
+		return nil, errors.New("The target server isn't listening on the network")
 	}
 
 	rop := remoteOperation{
@@ -549,7 +581,7 @@ func (r *ProtocolLXD) tryMigrateContainer(source InstanceServer, name string, re
 		success := false
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
-			req.Target.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, url.PathEscape(operation))
+			req.Target.Operation = serverURL + "/1.0/operations/" + url.PathEscape(operation)
 
 			op, err := source.MigrateContainer(name, req)
 			if err != nil {
@@ -589,6 +621,8 @@ func (r *ProtocolLXD) tryMigrateContainer(source InstanceServer, name string, re
 }
 
 // MigrateContainer requests that LXD prepares for a container migration.
+//
+// Deprecated: Use MigrateInstance instead.
 func (r *ProtocolLXD) MigrateContainer(name string, container api.ContainerPost) (Operation, error) {
 	if container.ContainerOnly {
 		err := r.CheckExtension("container_only_migration")
@@ -599,11 +633,11 @@ func (r *ProtocolLXD) MigrateContainer(name string, container api.ContainerPost)
 
 	// Quick check.
 	if !container.Migration {
-		return nil, fmt.Errorf("Can't ask for a rename through MigrateContainer")
+		return nil, errors.New("Can't ask for a rename through MigrateContainer")
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s", url.PathEscape(name)), container, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(name), container, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -612,9 +646,11 @@ func (r *ProtocolLXD) MigrateContainer(name string, container api.ContainerPost)
 }
 
 // DeleteContainer requests that LXD deletes the container.
+//
+// Deprecated: Use DeleteInstance instead.
 func (r *ProtocolLXD) DeleteContainer(name string) (Operation, error) {
 	// Send the request
-	op, _, err := r.queryOperation("DELETE", fmt.Sprintf("/containers/%s", url.PathEscape(name)), nil, "", true)
+	op, _, err := r.queryOperation(http.MethodDelete, "/containers/"+url.PathEscape(name), nil, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +659,8 @@ func (r *ProtocolLXD) DeleteContainer(name string) (Operation, error) {
 }
 
 // ExecContainer requests that LXD spawns a command inside the container.
+//
+// Deprecated: Use ExecInstance instead.
 func (r *ProtocolLXD) ExecContainer(containerName string, exec api.ContainerExecPost, args *ContainerExecArgs) (Operation, error) {
 	if exec.RecordOutput {
 		err := r.CheckExtension("container_exec_recording")
@@ -639,7 +677,7 @@ func (r *ProtocolLXD) ExecContainer(containerName string, exec api.ContainerExec
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/exec", url.PathEscape(containerName)), exec, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/exec", exec, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -651,11 +689,13 @@ func (r *ProtocolLXD) ExecContainer(containerName string, exec api.ContainerExec
 		// Parse the fds
 		fds := map[string]string{}
 
-		value, ok := opAPI.Metadata["fds"]
+		values, ok := opAPI.Metadata["fds"].(map[string]any)
 		if ok {
-			values := value.(map[string]any)
 			for k, v := range values {
-				fds[k] = v.(string)
+				fd, ok := v.(string)
+				if ok {
+					fds[k] = fd
+				}
 			}
 		}
 
@@ -775,10 +815,12 @@ func (r *ProtocolLXD) ExecContainer(containerName string, exec api.ContainerExec
 }
 
 // GetContainerFile retrieves the provided path from the container.
+//
+// Deprecated: Use GetInstanceFile instead.
 func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.ReadCloser, *ContainerFileResponse, error) {
 	// Prepare the HTTP request
 	requestURL, err := shared.URLEncode(
-		fmt.Sprintf("%s/1.0/containers/%s/files", r.httpBaseURL.String(), url.PathEscape(containerName)),
+		r.httpBaseURL.String()+"1.0/containers/"+url.PathEscape(containerName)+"/files",
 		map[string]string{"path": path})
 	if err != nil {
 		return nil, nil, err
@@ -789,7 +831,7 @@ func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.Re
 		return nil, nil, err
 	}
 
-	req, err := http.NewRequest("GET", requestURL, nil)
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -847,6 +889,8 @@ func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.Re
 }
 
 // CreateContainerFile tells LXD to create a file in the container.
+//
+// Deprecated: Use CreateInstanceFile instead.
 func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, args ContainerFileArgs) error {
 	if args.Type == "directory" {
 		err := r.CheckExtension("directory_manipulation")
@@ -870,25 +914,25 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 	}
 
 	// Prepare the HTTP request
-	requestURL := fmt.Sprintf("%s/1.0/containers/%s/files?path=%s", r.httpBaseURL.String(), url.PathEscape(containerName), url.QueryEscape(path))
+	requestURL := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(containerName) + "/files?path=" + url.QueryEscape(path)
 
 	requestURL, err := r.setQueryAttributes(requestURL)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", requestURL, args.Content)
+	req, err := http.NewRequest(http.MethodPost, requestURL, args.Content)
 	if err != nil {
 		return err
 	}
 
 	// Set the various headers
 	if args.UID > -1 {
-		req.Header.Set("X-LXD-uid", fmt.Sprintf("%d", args.UID))
+		req.Header.Set("X-LXD-uid", strconv.FormatInt(args.UID, 10))
 	}
 
 	if args.GID > -1 {
-		req.Header.Set("X-LXD-gid", fmt.Sprintf("%d", args.GID))
+		req.Header.Set("X-LXD-gid", strconv.FormatInt(args.GID, 10))
 	}
 
 	if args.Mode > -1 {
@@ -919,6 +963,8 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 }
 
 // DeleteContainerFile deletes a file in the container.
+//
+// Deprecated: Use DeleteInstanceFile instead.
 func (r *ProtocolLXD) DeleteContainerFile(containerName string, path string) error {
 	err := r.CheckExtension("file_delete")
 	if err != nil {
@@ -926,7 +972,7 @@ func (r *ProtocolLXD) DeleteContainerFile(containerName string, path string) err
 	}
 
 	// Send the request
-	_, _, err = r.query("DELETE", fmt.Sprintf("/containers/%s/files?path=%s", url.PathEscape(containerName), url.QueryEscape(path)), nil, "")
+	_, _, err = r.query(http.MethodDelete, "/containers/"+url.PathEscape(containerName)+"/files?path="+url.QueryEscape(path), nil, "")
 	if err != nil {
 		return err
 	}
@@ -935,11 +981,13 @@ func (r *ProtocolLXD) DeleteContainerFile(containerName string, path string) err
 }
 
 // GetContainerSnapshotNames returns a list of snapshot names for the container.
+//
+// Deprecated: Use GetInstanceSnapshotNames instead.
 func (r *ProtocolLXD) GetContainerSnapshotNames(containerName string) ([]string, error) {
 	// Fetch the raw URL values.
 	urls := []string{}
-	baseURL := fmt.Sprintf("/containers/%s/snapshots", url.PathEscape(containerName))
-	_, err := r.queryStruct("GET", baseURL, nil, "", &urls)
+	baseURL := "/containers/" + url.PathEscape(containerName) + "/snapshots"
+	_, err := r.queryStruct(http.MethodGet, baseURL, nil, "", &urls)
 	if err != nil {
 		return nil, err
 	}
@@ -949,11 +997,13 @@ func (r *ProtocolLXD) GetContainerSnapshotNames(containerName string) ([]string,
 }
 
 // GetContainerSnapshots returns a list of snapshots for the container.
+//
+// Deprecated: Use GetInstanceSnapshots instead.
 func (r *ProtocolLXD) GetContainerSnapshots(containerName string) ([]api.ContainerSnapshot, error) {
 	snapshots := []api.ContainerSnapshot{}
 
 	// Fetch the raw value
-	_, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/snapshots?recursion=1", url.PathEscape(containerName)), nil, "", &snapshots)
+	_, err := r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(containerName)+"/snapshots?recursion=1", nil, "", &snapshots)
 	if err != nil {
 		return nil, err
 	}
@@ -962,11 +1012,13 @@ func (r *ProtocolLXD) GetContainerSnapshots(containerName string) ([]api.Contain
 }
 
 // GetContainerSnapshot returns a Snapshot struct for the provided container and snapshot names.
+//
+// Deprecated: Use GetInstanceSnapshot instead.
 func (r *ProtocolLXD) GetContainerSnapshot(containerName string, name string) (*api.ContainerSnapshot, string, error) {
 	snapshot := api.ContainerSnapshot{}
 
 	// Fetch the raw value
-	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/snapshots/%s", url.PathEscape(containerName), url.PathEscape(name)), nil, "", &snapshot)
+	etag, err := r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(containerName)+"/snapshots/"+url.PathEscape(name), nil, "", &snapshot)
 	if err != nil {
 		return nil, "", err
 	}
@@ -975,6 +1027,8 @@ func (r *ProtocolLXD) GetContainerSnapshot(containerName string, name string) (*
 }
 
 // CreateContainerSnapshot requests that LXD creates a new snapshot for the container.
+//
+// Deprecated: Use CreateInstanceSnapshot instead.
 func (r *ProtocolLXD) CreateContainerSnapshot(containerName string, snapshot api.ContainerSnapshotsPost) (Operation, error) {
 	// Validate the request
 	if snapshot.ExpiresAt != nil {
@@ -985,7 +1039,7 @@ func (r *ProtocolLXD) CreateContainerSnapshot(containerName string, snapshot api
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/snapshots", url.PathEscape(containerName)), snapshot, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/snapshots", snapshot, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -994,6 +1048,8 @@ func (r *ProtocolLXD) CreateContainerSnapshot(containerName string, snapshot api
 }
 
 // CopyContainerSnapshot copies a snapshot from a remote server into a new container. Additional options can be passed using ContainerCopyArgs.
+//
+// Deprecated: Use CopyInstanceSnapshot instead.
 func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName string, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (RemoteOperation, error) {
 	// Backward compatibility (with broken Name field)
 	fields := strings.Split(snapshot.Name, shared.SnapshotDelimiter)
@@ -1018,7 +1074,7 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 			return nil, err
 		}
 
-		req.ContainerPut.Stateful = snapshot.Stateful
+		req.Stateful = snapshot.Stateful
 		req.Source.Live = false // Snapshots are never running and so we don't need live migration.
 	}
 
@@ -1029,16 +1085,16 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 		// Quick checks.
 		if shared.ValueInSlice(args.Mode, []string{"push", "relay"}) {
 			if !r.HasExtension("container_push") {
-				return nil, fmt.Errorf("The target server is missing the required \"container_push\" API extension")
+				return nil, errors.New("The target server is missing the required \"container_push\" API extension")
 			}
 
 			if !source.HasExtension("container_push") {
-				return nil, fmt.Errorf("The source server is missing the required \"container_push\" API extension")
+				return nil, errors.New("The source server is missing the required \"container_push\" API extension")
 			}
 		}
 
 		if args.Mode == "push" && !source.HasExtension("container_push_target") {
-			return nil, fmt.Errorf("The source server is missing the required \"container_push_target\" API extension")
+			return nil, errors.New("The source server is missing the required \"container_push_target\" API extension")
 		}
 
 		// Allow overriding the target name
@@ -1075,8 +1131,8 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 		}
 
 		// Local copy source fields
-		req.Source.Type = "copy"
-		req.Source.Source = fmt.Sprintf("%s/%s", cName, sName)
+		req.Source.Type = api.SourceTypeCopy
+		req.Source.Source = cName + "/" + sName
 
 		// Copy the container
 		op, err := r.CreateContainer(req)
@@ -1117,7 +1173,7 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 		}
 
 		// Create the container
-		req.Source.Type = "migration"
+		req.Source.Type = api.SourceTypeMigration
 		req.Source.Mode = "push"
 
 		op, err := r.CreateContainer(req)
@@ -1129,7 +1185,10 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 
 		targetSecrets := map[string]string{}
 		for k, v := range opAPI.Metadata {
-			targetSecrets[k] = v.(string)
+			value, ok := v.(string)
+			if ok {
+				targetSecrets[k] = value
+			}
 		}
 
 		// Prepare the source request
@@ -1157,13 +1216,16 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 
 	sourceSecrets := map[string]string{}
 	for k, v := range opAPI.Metadata {
-		sourceSecrets[k] = v.(string)
+		value, ok := v.(string)
+		if ok {
+			sourceSecrets[k] = value
+		}
 	}
 
 	// Relay mode migration
 	if args != nil && args.Mode == "relay" {
 		// Push copy source fields
-		req.Source.Type = "migration"
+		req.Source.Type = api.SourceTypeMigration
 		req.Source.Mode = "push"
 
 		// Start the process
@@ -1177,7 +1239,10 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 		// Extract the websockets
 		targetSecrets := map[string]string{}
 		for k, v := range targetOpAPI.Metadata {
-			targetSecrets[k] = v.(string)
+			value, ok := v.(string)
+			if ok {
+				targetSecrets[k] = value
+			}
 		}
 
 		// Launch the relay
@@ -1202,7 +1267,7 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 	}
 
 	// Pull mode migration
-	req.Source.Type = "migration"
+	req.Source.Type = api.SourceTypeMigration
 	req.Source.Mode = "pull"
 	req.Source.Operation = opAPI.ID
 	req.Source.Websockets = sourceSecrets
@@ -1212,14 +1277,16 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source InstanceServer, containerName
 }
 
 // RenameContainerSnapshot requests that LXD renames the snapshot.
+//
+// Deprecated: Use RenameInstanceSnapshot instead.
 func (r *ProtocolLXD) RenameContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (Operation, error) {
 	// Quick check.
 	if container.Migration {
-		return nil, fmt.Errorf("Can't ask for a migration through RenameContainerSnapshot")
+		return nil, errors.New("Can't ask for a migration through RenameContainerSnapshot")
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/snapshots/%s", url.PathEscape(containerName), url.PathEscape(name)), container, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/snapshots/"+url.PathEscape(name), container, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,7 +1298,7 @@ func (r *ProtocolLXD) RenameContainerSnapshot(containerName string, name string,
 // It runs the migration asynchronously and returns a RemoteOperation to track the migration status and any errors.
 func (r *ProtocolLXD) tryMigrateContainerSnapshot(source InstanceServer, containerName string, name string, req api.ContainerSnapshotPost, urls []string) (RemoteOperation, error) {
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("The target server isn't listening on the network")
+		return nil, errors.New("The target server isn't listening on the network")
 	}
 
 	rop := remoteOperation{
@@ -1245,7 +1312,7 @@ func (r *ProtocolLXD) tryMigrateContainerSnapshot(source InstanceServer, contain
 		success := false
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
-			req.Target.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, url.PathEscape(operation))
+			req.Target.Operation = serverURL + "/1.0/operations/" + url.PathEscape(operation)
 
 			op, err := source.MigrateContainerSnapshot(containerName, name, req)
 			if err != nil {
@@ -1285,14 +1352,16 @@ func (r *ProtocolLXD) tryMigrateContainerSnapshot(source InstanceServer, contain
 }
 
 // MigrateContainerSnapshot requests that LXD prepares for a snapshot migration.
+//
+// Deprecated: Use MigrateInstanceSnapshot instead.
 func (r *ProtocolLXD) MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (Operation, error) {
 	// Quick check.
 	if !container.Migration {
-		return nil, fmt.Errorf("Can't ask for a rename through MigrateContainerSnapshot")
+		return nil, errors.New("Can't ask for a rename through MigrateContainerSnapshot")
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/snapshots/%s", url.PathEscape(containerName), url.PathEscape(name)), container, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/snapshots/"+url.PathEscape(name), container, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1301,9 +1370,11 @@ func (r *ProtocolLXD) MigrateContainerSnapshot(containerName string, name string
 }
 
 // DeleteContainerSnapshot requests that LXD deletes the container snapshot.
+//
+// Deprecated: Use DeleteInstanceSnapshot instead.
 func (r *ProtocolLXD) DeleteContainerSnapshot(containerName string, name string) (Operation, error) {
 	// Send the request
-	op, _, err := r.queryOperation("DELETE", fmt.Sprintf("/containers/%s/snapshots/%s", url.PathEscape(containerName), url.PathEscape(name)), nil, "", true)
+	op, _, err := r.queryOperation(http.MethodDelete, "/containers/"+url.PathEscape(containerName)+"/snapshots/"+url.PathEscape(name), nil, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1312,6 +1383,8 @@ func (r *ProtocolLXD) DeleteContainerSnapshot(containerName string, name string)
 }
 
 // UpdateContainerSnapshot requests that LXD updates the container snapshot.
+//
+// Deprecated: Use UpdateInstanceSnapshot instead.
 func (r *ProtocolLXD) UpdateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPut, ETag string) (Operation, error) {
 	err := r.CheckExtension("snapshot_expiry")
 	if err != nil {
@@ -1319,8 +1392,7 @@ func (r *ProtocolLXD) UpdateContainerSnapshot(containerName string, name string,
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("PUT", fmt.Sprintf("/containers/%s/snapshots/%s",
-		url.PathEscape(containerName), url.PathEscape(name)), container, ETag, true)
+	op, _, err := r.queryOperation(http.MethodPut, "/containers/"+url.PathEscape(containerName)+"/snapshots/"+url.PathEscape(name), container, ETag, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,11 +1401,13 @@ func (r *ProtocolLXD) UpdateContainerSnapshot(containerName string, name string,
 }
 
 // GetContainerState returns a ContainerState entry for the provided container name.
+//
+// Deprecated: Use GetInstanceState instead.
 func (r *ProtocolLXD) GetContainerState(name string) (*api.ContainerState, string, error) {
 	state := api.ContainerState{}
 
 	// Fetch the raw value
-	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/state", url.PathEscape(name)), nil, "", &state)
+	etag, err := r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(name)+"/state", nil, "", &state)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1342,9 +1416,11 @@ func (r *ProtocolLXD) GetContainerState(name string) (*api.ContainerState, strin
 }
 
 // UpdateContainerState updates the container to match the requested state.
+//
+// Deprecated: Use UpdateInstanceState instead.
 func (r *ProtocolLXD) UpdateContainerState(name string, state api.ContainerStatePut, ETag string) (Operation, error) {
 	// Send the request
-	op, _, err := r.queryOperation("PUT", fmt.Sprintf("/containers/%s/state", url.PathEscape(name)), state, ETag, true)
+	op, _, err := r.queryOperation(http.MethodPut, "/containers/"+url.PathEscape(name)+"/state", state, ETag, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1353,11 +1429,13 @@ func (r *ProtocolLXD) UpdateContainerState(name string, state api.ContainerState
 }
 
 // GetContainerLogfiles returns a list of logfiles for the container.
+//
+// Deprecated: Use GetInstanceLogfiles instead.
 func (r *ProtocolLXD) GetContainerLogfiles(name string) ([]string, error) {
 	// Fetch the raw URL values.
 	urls := []string{}
-	baseURL := fmt.Sprintf("/containers/%s/logs", url.PathEscape(name))
-	_, err := r.queryStruct("GET", baseURL, nil, "", &urls)
+	baseURL := "/containers/" + url.PathEscape(name) + "/logs"
+	_, err := r.queryStruct(http.MethodGet, baseURL, nil, "", &urls)
 	if err != nil {
 		return nil, err
 	}
@@ -1368,17 +1446,19 @@ func (r *ProtocolLXD) GetContainerLogfiles(name string) ([]string, error) {
 
 // GetContainerLogfile returns the content of the requested logfile
 //
+// Deprecated: Use GetInstanceLogfile instead.
+//
 // Note that it's the caller's responsibility to close the returned ReadCloser.
 func (r *ProtocolLXD) GetContainerLogfile(name string, filename string) (io.ReadCloser, error) {
 	// Prepare the HTTP request
-	url := fmt.Sprintf("%s/1.0/containers/%s/logs/%s", r.httpBaseURL.String(), url.PathEscape(name), url.PathEscape(filename))
+	url := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(name) + "/logs/" + url.PathEscape(filename)
 
 	url, err := r.setQueryAttributes(url)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1401,9 +1481,11 @@ func (r *ProtocolLXD) GetContainerLogfile(name string, filename string) (io.Read
 }
 
 // DeleteContainerLogfile deletes the requested logfile.
+//
+// Deprecated: Use DeleteInstanceLogfile instead.
 func (r *ProtocolLXD) DeleteContainerLogfile(name string, filename string) error {
 	// Send the request
-	_, _, err := r.query("DELETE", fmt.Sprintf("/containers/%s/logs/%s", url.PathEscape(name), url.PathEscape(filename)), nil, "")
+	_, _, err := r.query(http.MethodDelete, "/containers/"+url.PathEscape(name)+"/logs/"+url.PathEscape(filename), nil, "")
 	if err != nil {
 		return err
 	}
@@ -1412,6 +1494,8 @@ func (r *ProtocolLXD) DeleteContainerLogfile(name string, filename string) error
 }
 
 // GetContainerMetadata returns container metadata.
+//
+// Deprecated: Use GetInstanceMetadata instead.
 func (r *ProtocolLXD) GetContainerMetadata(name string) (*api.ImageMetadata, string, error) {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
@@ -1420,8 +1504,8 @@ func (r *ProtocolLXD) GetContainerMetadata(name string) (*api.ImageMetadata, str
 
 	metadata := api.ImageMetadata{}
 
-	url := fmt.Sprintf("/containers/%s/metadata", url.PathEscape(name))
-	etag, err := r.queryStruct("GET", url, nil, "", &metadata)
+	url := "/containers/" + url.PathEscape(name) + "/metadata"
+	etag, err := r.queryStruct(http.MethodGet, url, nil, "", &metadata)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1430,14 +1514,16 @@ func (r *ProtocolLXD) GetContainerMetadata(name string) (*api.ImageMetadata, str
 }
 
 // SetContainerMetadata sets the content of the container metadata file.
+//
+// Deprecated: Use SetInstanceMetadata instead.
 func (r *ProtocolLXD) SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) error {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("/containers/%s/metadata", url.PathEscape(name))
-	_, _, err = r.query("PUT", url, metadata, ETag)
+	url := "/containers/" + url.PathEscape(name) + "/metadata"
+	_, _, err = r.query(http.MethodPut, url, metadata, ETag)
 	if err != nil {
 		return err
 	}
@@ -1446,6 +1532,8 @@ func (r *ProtocolLXD) SetContainerMetadata(name string, metadata api.ImageMetada
 }
 
 // GetContainerTemplateFiles returns the list of names of template files for a container.
+//
+// Deprecated: Use GetInstanceTemplateFiles instead.
 func (r *ProtocolLXD) GetContainerTemplateFiles(containerName string) ([]string, error) {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
@@ -1454,8 +1542,8 @@ func (r *ProtocolLXD) GetContainerTemplateFiles(containerName string) ([]string,
 
 	templates := []string{}
 
-	url := fmt.Sprintf("/containers/%s/metadata/templates", url.PathEscape(containerName))
-	_, err = r.queryStruct("GET", url, nil, "", &templates)
+	url := "/containers/" + url.PathEscape(containerName) + "/metadata/templates"
+	_, err = r.queryStruct(http.MethodGet, url, nil, "", &templates)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,20 +1552,22 @@ func (r *ProtocolLXD) GetContainerTemplateFiles(containerName string) ([]string,
 }
 
 // GetContainerTemplateFile returns the content of a template file for a container.
+//
+// Deprecated: Use GetInstanceTemplateFile instead.
 func (r *ProtocolLXD) GetContainerTemplateFile(containerName string, templateName string) (io.ReadCloser, error) {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/1.0/containers/%s/metadata/templates?path=%s", r.httpBaseURL.String(), url.PathEscape(containerName), url.QueryEscape(templateName))
+	url := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(containerName) + "/metadata/templates?path=" + url.QueryEscape(templateName)
 
 	url, err = r.setQueryAttributes(url)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1500,20 +1590,22 @@ func (r *ProtocolLXD) GetContainerTemplateFile(containerName string, templateNam
 }
 
 // CreateContainerTemplateFile creates an a template for a container.
+//
+// Deprecated: Use CreateInstanceTemplateFile instead.
 func (r *ProtocolLXD) CreateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) error {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/1.0/containers/%s/metadata/templates?path=%s", r.httpBaseURL.String(), url.PathEscape(containerName), url.QueryEscape(templateName))
+	url := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(containerName) + "/metadata/templates?path=" + url.QueryEscape(templateName)
 
 	url, err = r.setQueryAttributes(url)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", url, content)
+	req, err := http.NewRequest(http.MethodPost, url, content)
 	if err != nil {
 		return err
 	}
@@ -1533,22 +1625,28 @@ func (r *ProtocolLXD) CreateContainerTemplateFile(containerName string, template
 }
 
 // UpdateContainerTemplateFile updates the content for a container template file.
+//
+// Deprecated: Use UpdateInstanceTemplateFile instead.
 func (r *ProtocolLXD) UpdateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) error {
 	return r.CreateContainerTemplateFile(containerName, templateName, content)
 }
 
 // DeleteContainerTemplateFile deletes a template file for a container.
+//
+// Deprecated: Use DeleteInstanceTemplateFile instead.
 func (r *ProtocolLXD) DeleteContainerTemplateFile(name string, templateName string) error {
 	err := r.CheckExtension("container_edit_metadata")
 	if err != nil {
 		return err
 	}
 
-	_, _, err = r.query("DELETE", fmt.Sprintf("/containers/%s/metadata/templates?path=%s", url.PathEscape(name), url.QueryEscape(templateName)), nil, "")
+	_, _, err = r.query(http.MethodDelete, "/containers/"+url.PathEscape(name)+"/metadata/templates?path="+url.QueryEscape(templateName), nil, "")
 	return err
 }
 
 // ConsoleContainer requests that LXD attaches to the console device of a container.
+//
+// Deprecated: Use ConsoleInstance instead.
 func (r *ProtocolLXD) ConsoleContainer(containerName string, console api.ContainerConsolePost, args *ContainerConsoleArgs) (Operation, error) {
 	err := r.CheckExtension("console")
 	if err != nil {
@@ -1556,7 +1654,7 @@ func (r *ProtocolLXD) ConsoleContainer(containerName string, console api.Contain
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/console", url.PathEscape(containerName)), console, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/console", console, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1564,28 +1662,30 @@ func (r *ProtocolLXD) ConsoleContainer(containerName string, console api.Contain
 	opAPI := op.Get()
 
 	if args == nil || args.Terminal == nil {
-		return nil, fmt.Errorf("A terminal must be set")
+		return nil, errors.New("A terminal must be set")
 	}
 
 	if args.Control == nil {
-		return nil, fmt.Errorf("A control channel must be set")
+		return nil, errors.New("A control channel must be set")
 	}
 
 	// Parse the fds
 	fds := map[string]string{}
 
-	value, ok := opAPI.Metadata["fds"]
+	values, ok := opAPI.Metadata["fds"].(map[string]any)
 	if ok {
-		values := value.(map[string]any)
 		for k, v := range values {
-			fds[k] = v.(string)
+			fd, ok := v.(string)
+			if ok {
+				fds[k] = fd
+			}
 		}
 	}
 
 	var controlConn *websocket.Conn
 	// Call the control handler with a connection to the control socket
 	if fds[api.SecretNameControl] == "" {
-		return nil, fmt.Errorf("Did not receive a file descriptor for the control channel")
+		return nil, errors.New("Did not receive a file descriptor for the control channel")
 	}
 
 	controlConn, err = r.GetOperationWebsocket(opAPI.ID, fds[api.SecretNameControl])
@@ -1622,6 +1722,8 @@ func (r *ProtocolLXD) ConsoleContainer(containerName string, console api.Contain
 
 // GetContainerConsoleLog requests that LXD attaches to the console device of a container.
 //
+// Deprecated: Use GetInstanceConsoleLog instead.
+//
 // Note that it's the caller's responsibility to close the returned ReadCloser.
 func (r *ProtocolLXD) GetContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) (io.ReadCloser, error) {
 	err := r.CheckExtension("console")
@@ -1630,14 +1732,14 @@ func (r *ProtocolLXD) GetContainerConsoleLog(containerName string, args *Contain
 	}
 
 	// Prepare the HTTP request
-	url := fmt.Sprintf("%s/1.0/containers/%s/console", r.httpBaseURL.String(), url.PathEscape(containerName))
+	url := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(containerName) + "/console"
 
 	url, err = r.setQueryAttributes(url)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1660,6 +1762,8 @@ func (r *ProtocolLXD) GetContainerConsoleLog(containerName string, args *Contain
 }
 
 // DeleteContainerConsoleLog deletes the requested container's console log.
+//
+// Deprecated: Use DeleteInstanceConsoleLog instead.
 func (r *ProtocolLXD) DeleteContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) error {
 	err := r.CheckExtension("console")
 	if err != nil {
@@ -1667,7 +1771,7 @@ func (r *ProtocolLXD) DeleteContainerConsoleLog(containerName string, args *Cont
 	}
 
 	// Send the request
-	_, _, err = r.query("DELETE", fmt.Sprintf("/containers/%s/console", url.PathEscape(containerName)), nil, "")
+	_, _, err = r.query(http.MethodDelete, "/containers/"+url.PathEscape(containerName)+"/console", nil, "")
 	if err != nil {
 		return err
 	}
@@ -1676,6 +1780,8 @@ func (r *ProtocolLXD) DeleteContainerConsoleLog(containerName string, args *Cont
 }
 
 // GetContainerBackupNames returns a list of backup names for the container.
+//
+// Deprecated: Use GetInstanceBackupNames instead.
 func (r *ProtocolLXD) GetContainerBackupNames(containerName string) ([]string, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1684,8 +1790,8 @@ func (r *ProtocolLXD) GetContainerBackupNames(containerName string) ([]string, e
 
 	// Fetch the raw URL values.
 	urls := []string{}
-	baseURL := fmt.Sprintf("/containers/%s/backups", url.PathEscape(containerName))
-	_, err = r.queryStruct("GET", baseURL, nil, "", &urls)
+	baseURL := "/containers/" + url.PathEscape(containerName) + "/backups"
+	_, err = r.queryStruct(http.MethodGet, baseURL, nil, "", &urls)
 	if err != nil {
 		return nil, err
 	}
@@ -1695,6 +1801,8 @@ func (r *ProtocolLXD) GetContainerBackupNames(containerName string) ([]string, e
 }
 
 // GetContainerBackups returns a list of backups for the container.
+//
+// Deprecated: Use GetInstanceBackups instead.
 func (r *ProtocolLXD) GetContainerBackups(containerName string) ([]api.ContainerBackup, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1704,7 +1812,7 @@ func (r *ProtocolLXD) GetContainerBackups(containerName string) ([]api.Container
 	// Fetch the raw value
 	backups := []api.ContainerBackup{}
 
-	_, err = r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups?recursion=1", url.PathEscape(containerName)), nil, "", &backups)
+	_, err = r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(containerName)+"/backups?recursion=1", nil, "", &backups)
 	if err != nil {
 		return nil, err
 	}
@@ -1713,6 +1821,8 @@ func (r *ProtocolLXD) GetContainerBackups(containerName string) ([]api.Container
 }
 
 // GetContainerBackup returns a Backup struct for the provided container and backup names.
+//
+// Deprecated: Use GetInstanceBackup instead.
 func (r *ProtocolLXD) GetContainerBackup(containerName string, name string) (*api.ContainerBackup, string, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1721,7 +1831,7 @@ func (r *ProtocolLXD) GetContainerBackup(containerName string, name string) (*ap
 
 	// Fetch the raw value
 	backup := api.ContainerBackup{}
-	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups/%s", url.PathEscape(containerName), url.PathEscape(name)), nil, "", &backup)
+	etag, err := r.queryStruct(http.MethodGet, "/containers/"+url.PathEscape(containerName)+"/backups/"+url.PathEscape(name), nil, "", &backup)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1730,6 +1840,8 @@ func (r *ProtocolLXD) GetContainerBackup(containerName string, name string) (*ap
 }
 
 // CreateContainerBackup requests that LXD creates a new backup for the container.
+//
+// Deprecated: Use CreateInstanceBackup instead.
 func (r *ProtocolLXD) CreateContainerBackup(containerName string, backup api.ContainerBackupsPost) (Operation, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1737,8 +1849,7 @@ func (r *ProtocolLXD) CreateContainerBackup(containerName string, backup api.Con
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/backups",
-		url.PathEscape(containerName)), backup, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/backups", backup, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1747,6 +1858,8 @@ func (r *ProtocolLXD) CreateContainerBackup(containerName string, backup api.Con
 }
 
 // RenameContainerBackup requests that LXD renames the backup.
+//
+// Deprecated: Use RenameInstanceBackup instead.
 func (r *ProtocolLXD) RenameContainerBackup(containerName string, name string, backup api.ContainerBackupPost) (Operation, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1754,8 +1867,7 @@ func (r *ProtocolLXD) RenameContainerBackup(containerName string, name string, b
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/backups/%s",
-		url.PathEscape(containerName), url.PathEscape(name)), backup, "", true)
+	op, _, err := r.queryOperation(http.MethodPost, "/containers/"+url.PathEscape(containerName)+"/backups/"+url.PathEscape(name), backup, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1764,6 +1876,8 @@ func (r *ProtocolLXD) RenameContainerBackup(containerName string, name string, b
 }
 
 // DeleteContainerBackup requests that LXD deletes the container backup.
+//
+// Deprecated: Use DeleteInstanceBackup instead.
 func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (Operation, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1771,8 +1885,7 @@ func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (
 	}
 
 	// Send the request
-	op, _, err := r.queryOperation("DELETE", fmt.Sprintf("/containers/%s/backups/%s",
-		url.PathEscape(containerName), url.PathEscape(name)), nil, "", true)
+	op, _, err := r.queryOperation(http.MethodDelete, "/containers/"+url.PathEscape(containerName)+"/backups/"+url.PathEscape(name), nil, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1781,6 +1894,8 @@ func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (
 }
 
 // GetContainerBackupFile requests the container backup content.
+//
+// Deprecated: Use GetInstanceBackupFile instead.
 func (r *ProtocolLXD) GetContainerBackupFile(containerName string, name string, req *BackupFileRequest) (*BackupFileResponse, error) {
 	err := r.CheckExtension("container_backup")
 	if err != nil {
@@ -1788,14 +1903,13 @@ func (r *ProtocolLXD) GetContainerBackupFile(containerName string, name string, 
 	}
 
 	// Build the URL
-	uri := fmt.Sprintf("%s/1.0/containers/%s/backups/%s/export", r.httpBaseURL.String(),
-		url.PathEscape(containerName), url.PathEscape(name))
+	uri := r.httpBaseURL.String() + "/1.0/containers/" + url.PathEscape(containerName) + "/backups/" + url.PathEscape(name) + "/export"
 	if r.project != "" {
-		uri += fmt.Sprintf("?project=%s", url.QueryEscape(r.project))
+		uri += "?project=" + url.QueryEscape(r.project)
 	}
 
 	// Prepare the download request
-	request, err := http.NewRequest("GET", uri, nil)
+	request, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1828,7 +1942,7 @@ func (r *ProtocolLXD) GetContainerBackupFile(containerName string, name string, 
 			Tracker: &ioprogress.ProgressTracker{
 				Length: response.ContentLength,
 				Handler: func(percent int64, speed int64) {
-					req.ProgressHandler(ioprogress.ProgressData{Text: fmt.Sprintf("%d%% (%s/s)", percent, units.GetByteSizeString(speed, 2))})
+					req.ProgressHandler(ioprogress.ProgressData{Text: strconv.FormatInt(percent, 10) + "% (" + units.GetByteSizeString(speed, 2) + "/s)"})
 				},
 			},
 		}

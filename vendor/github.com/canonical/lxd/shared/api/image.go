@@ -134,6 +134,8 @@ type ImagePut struct {
 //
 // swagger:model
 type Image struct {
+	WithEntitlements `yaml:",inline"`
+
 	// List of aliases
 	Aliases []ImageAlias `json:"aliases" yaml:"aliases"`
 
@@ -201,6 +203,12 @@ type Image struct {
 	//
 	// API extension: image_profiles
 	Profiles []string `json:"profiles" yaml:"profiles"`
+
+	// Project name
+	// Example: project1
+	//
+	// API extension: images_all_projects
+	Project string `json:"project" yaml:"project"`
 }
 
 // Writable converts a full Image struct into a ImagePut struct (filters read-only fields).
@@ -258,7 +266,7 @@ type ImageSource struct {
 	Protocol string `json:"protocol" yaml:"protocol"`
 
 	// URL of the source server
-	// Example: https://cloud-images.ubuntu.com/releases
+	// Example: https://cloud-images.ubuntu.com/releases/
 	Server string `json:"server" yaml:"server"`
 
 	// Type of image (container or virtual-machine)
@@ -301,6 +309,8 @@ type ImageAliasesEntryPut struct {
 //
 // swagger:model
 type ImageAliasesEntry struct {
+	WithEntitlements `yaml:",inline"`
+
 	// Alias name
 	// Example: ubuntu-24.04
 	Name string `json:"name" yaml:"name"`

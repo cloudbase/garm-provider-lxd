@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	neturl "net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -27,15 +27,8 @@ type ProtocolLXD struct {
 	ctxConnected       context.Context
 	ctxConnectedCancel context.CancelFunc
 
-	// eventConns contains event listener connections associated to a project name (or empty for all projects).
-	eventConns map[string]*websocket.Conn
-
-	// eventConnsLock controls write access to the eventConns.
-	eventConnsLock sync.Mutex
-
-	// eventListeners is a slice of event listeners associated to a project name (or empty for all projects).
-	eventListeners     map[string][]*EventListener
-	eventListenersLock sync.Mutex
+	// eventListenersLock is used to synchronize access to the event listeners.
+	eventListenerManager *eventListenerManager
 
 	http            *http.Client
 	httpCertificate string
@@ -88,7 +81,7 @@ func (r *ProtocolLXD) GetConnectionInfo() (*ConnectionInfo, error) {
 				continue
 			}
 
-			url := fmt.Sprintf("https://%s", addr)
+			url := "https://" + addr
 			if !shared.ValueInSlice(url, urls) {
 				urls = append(urls, url)
 			}
@@ -137,7 +130,7 @@ func (r *ProtocolLXD) isSameServer(server Server) bool {
 // GetHTTPClient returns the http client used for the connection. This can be used to set custom http options.
 func (r *ProtocolLXD) GetHTTPClient() (*http.Client, error) {
 	if r.http == nil {
-		return nil, fmt.Errorf("HTTP client isn't set, bad connection")
+		return nil, errors.New("HTTP client isn't set, bad connection")
 	}
 
 	return r.http, nil
@@ -148,7 +141,13 @@ func (r *ProtocolLXD) DoHTTP(req *http.Request) (*http.Response, error) {
 	r.addClientHeaders(req)
 
 	if r.oidcClient != nil {
-		return r.oidcClient.do(req)
+		var oidcScopesExtensionPresent bool
+		err := r.CheckExtension("oidc_scopes")
+		if err == nil {
+			oidcScopesExtensionPresent = true
+		}
+
+		return r.oidcClient.do(req, oidcScopesExtensionPresent)
 	}
 
 	return r.http.Do(req)
@@ -168,7 +167,7 @@ func (r *ProtocolLXD) addClientHeaders(req *http.Request) {
 	}
 
 	if r.oidcClient != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", r.oidcClient.getAccessToken()))
+		req.Header.Set("Authorization", "Bearer "+r.oidcClient.getAccessToken())
 	}
 }
 
@@ -182,7 +181,7 @@ func (r *ProtocolLXD) RequireAuthenticated(authenticated bool) {
 // This should only be used by internal LXD tools.
 func (r *ProtocolLXD) RawQuery(method string, path string, data any, ETag string) (*api.Response, string, error) {
 	// Generate the URL
-	url := fmt.Sprintf("%s%s", r.httpBaseURL.String(), path)
+	url := r.httpBaseURL.String() + path
 
 	return r.rawQuery(method, url, data, ETag)
 }
@@ -221,7 +220,7 @@ func lxdParseResponse(resp *http.Response) (*api.Response, string, error) {
 
 	// Handle errors
 	if response.Type == api.ErrorResponse {
-		return nil, "", api.StatusErrorf(resp.StatusCode, response.Error)
+		return nil, "", api.NewStatusError(resp.StatusCode, response.Error)
 	}
 
 	return &response, etag, nil
@@ -269,9 +268,6 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data any, ETag string)
 
 			// Set the encoding accordingly
 			req.Header.Set("Content-Type", "application/json")
-
-			// Log the data
-			logger.Debugf(logger.Pretty(data))
 		}
 	} else {
 		// No data to be sent along with the request
@@ -330,7 +326,7 @@ func (r *ProtocolLXD) setQueryAttributes(uri string) (string, error) {
 
 func (r *ProtocolLXD) query(method string, path string, data any, ETag string) (*api.Response, string, error) {
 	// Generate the URL
-	url := fmt.Sprintf("%s/1.0%s", r.httpBaseURL.String(), path)
+	url := r.httpBaseURL.String() + "/1.0" + path
 
 	// Add project/target
 	url, err := r.setQueryAttributes(url)
@@ -357,7 +353,7 @@ func (r *ProtocolLXD) queryStruct(method string, path string, data any, ETag str
 
 	// Log the data
 	logger.Debugf("Got response struct from LXD")
-	logger.Debugf(logger.Pretty(target))
+	logger.Debug(logger.Pretty(target))
 
 	return etag, nil
 }
@@ -404,7 +400,7 @@ func (r *ProtocolLXD) queryOperation(method string, path string, data any, ETag 
 
 	// Log the data
 	logger.Debugf("Got operation from LXD")
-	logger.Debugf(logger.Pretty(op.Operation))
+	logger.Debug(logger.Pretty(op.Operation))
 
 	return &op, etag, nil
 }
@@ -460,14 +456,12 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 // It then leverages the rawWebsocket method to establish and return a websocket connection to the generated URL.
 func (r *ProtocolLXD) websocket(path string) (*websocket.Conn, error) {
 	// Generate the URL
-	var url string
+	url := r.httpBaseURL.Host + "/1.0" + path
 	if r.httpBaseURL.Scheme == "https" {
-		url = fmt.Sprintf("wss://%s/1.0%s", r.httpBaseURL.Host, path)
-	} else {
-		url = fmt.Sprintf("ws://%s/1.0%s", r.httpBaseURL.Host, path)
+		return r.rawWebsocket("wss://" + url)
 	}
 
-	return r.rawWebsocket(url)
+	return r.rawWebsocket("ws://" + url)
 }
 
 // WithContext returns a client that will add context.Context.
@@ -495,7 +489,7 @@ func (r *ProtocolLXD) getUnderlyingHTTPTransport() (*http.Transport, error) {
 // is also updated with the minimal source fields.
 func (r *ProtocolLXD) getSourceImageConnectionInfo(source ImageServer, image api.Image, instSrc *api.InstanceSource) (info *ConnectionInfo, err error) {
 	// Set the minimal source fields
-	instSrc.Type = "image"
+	instSrc.Type = api.SourceTypeImage
 
 	// Optimization for the local image case
 	if r.isSameServer(source) {
