@@ -64,6 +64,8 @@ const NetworkStatusUnavailable = "Unavailable"
 //
 // swagger:model
 type Network struct {
+	WithEntitlements `yaml:",inline"`
+
 	// The network name
 	// Read only: true
 	// Example: lxdbr0
@@ -109,6 +111,12 @@ type Network struct {
 	//
 	// API extension: clustering
 	Locations []string `json:"locations" yaml:"locations"`
+
+	// Project name
+	// Example: project1
+	//
+	// API extension: networks_all_projects
+	Project string `json:"project" yaml:"project"`
 }
 
 // Writable converts a full Network struct into a NetworkPut struct (filters read-only fields).
@@ -152,6 +160,12 @@ type NetworkLease struct {
 	//
 	// API extension: network_leases_location
 	Location string `json:"location" yaml:"location"`
+
+	// Name of the project of the entity related to the hostname
+	// Example: default
+	//
+	// API extension: network_allocations_ovn_uplink
+	Project string `json:"project" yaml:"project"`
 }
 
 // NetworkState represents the network state

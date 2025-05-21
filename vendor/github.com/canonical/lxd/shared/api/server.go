@@ -10,6 +10,12 @@ type ServerEnvironment struct {
 	// Example: ["x86_64", "i686"]
 	Architectures []string `json:"architectures" yaml:"architectures"`
 
+	// Range of supported backup metadata versions
+	// Example: [1, 2]
+	//
+	// API extension: backup_metadata_version
+	BackupMetadataVersionRange []uint32 `json:"backup_metadata_version_range" yaml:"backup_metadata_version_range"`
+
 	// Server certificate as PEM encoded X509
 	// Example: X509 PEM certificate
 	Certificate string `json:"certificate" yaml:"certificate"`
@@ -157,8 +163,8 @@ type ServerStorageDriverInfo struct {
 // swagger:model
 type ServerPut struct {
 	// Server configuration map (refer to doc/server.md)
-	// Example: {"core.https_address": ":8443", "core.trust_password": "xyz"}
-	Config map[string]string `json:"config" yaml:"config"`
+	// Example: {"core.https_address": ":8443"}
+	Config map[string]any `json:"config" yaml:"config"`
 }
 
 // ServerUntrusted represents a LXD server for an untrusted client
@@ -196,14 +202,22 @@ type ServerUntrusted struct {
 	//
 	// API extension: oidc
 	AuthMethods []string `json:"auth_methods" yaml:"auth_methods"`
+
+	// Whether the requester sent a client certificate with the request
+	// Read only: true
+	// Example: false
+	//
+	// API extension: client_cert_presence
+	ClientCertificate bool `json:"client_certificate" yaml:"client_certificate"`
 }
 
 // Server represents a LXD server
 //
 // swagger:model
 type Server struct {
-	ServerPut       `yaml:",inline"`
-	ServerUntrusted `yaml:",inline"`
+	WithEntitlements `yaml:",inline"`
+	ServerPut        `yaml:",inline"`
+	ServerUntrusted  `yaml:",inline"`
 
 	// The current user username as seen by LXD
 	// Read only: true
