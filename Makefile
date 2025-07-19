@@ -15,7 +15,10 @@ default: build
 .PHONY : build build-static test install-lint-deps lint go-test fmt fmtcheck verify-vendor verify create-release-files release
 
 build:
-	@$(GO) build .
+	@echo Building
+	$(shell mkdir -p ./bin)
+	@$(GO) build -o bin/$(GARM_PROVIDER_NAME) .
+	@echo Binaries are available in $(PWD)/bin
 
 clean: ## Clean up build artifacts
 	@rm -rf ./bin ./build ./release
