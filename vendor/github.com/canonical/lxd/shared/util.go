@@ -52,6 +52,11 @@ const HTTPSMetricsDefaultPort = 9100
 // HTTPSStorageBucketsDefaultPort is the default port for the storage buckets listener.
 const HTTPSStorageBucketsDefaultPort = 9000
 
+// RenderTemplateRecursionLimit is the suggested maximum recursion depth for rendering templates.
+// Prevent unbounded recursion while rendering templates. Normal use should not
+// require more than 1 or 2 levels of recursion.
+const RenderTemplateRecursionLimit = 5
+
 // URLEncode encodes a path and query parameters to a URL.
 func URLEncode(path string, query map[string]string) (string, error) {
 	u, err := url.Parse(path)
@@ -1323,9 +1328,24 @@ func (r *ReadSeeker) Seek(offset int64, whence int) (int64, error) {
 }
 
 // RenderTemplate renders a pongo2 template.
-func RenderTemplate(template string, ctx pongo2.Context) (string, error) {
+func RenderTemplate(template string, ctx pongo2.Context, recursionLimit int) (string, error) {
+	if recursionLimit <= 0 {
+		return "", errors.New("Recursion limit reached while rendering template")
+	}
+
+	// Create custom TemplateSet
+	set := pongo2.NewSet("restricted", pongo2.DefaultLoader)
+
+	// Ban tags that could be used to access the host's filesystem.
+	for _, tag := range []string{"extends", "import", "include", "ssi"} {
+		err := set.BanTag(tag)
+		if err != nil {
+			return "", fmt.Errorf("Failed to ban tag %q: %w", tag, err)
+		}
+	}
+
 	// Load template from string
-	tpl, err := pongo2.FromString("{% autoescape off %}" + template + "{% endautoescape %}")
+	tpl, err := set.FromString("{% autoescape off %}" + template + "{% endautoescape %}")
 	if err != nil {
 		return "", err
 	}
@@ -1333,15 +1353,15 @@ func RenderTemplate(template string, ctx pongo2.Context) (string, error) {
 	// Get rendered template
 	ret, err := tpl.Execute(ctx)
 	if err != nil {
-		return ret, err
+		return "", err
 	}
 
 	// Looks like we're nesting templates so run pongo again
 	if strings.Contains(ret, "{{") || strings.Contains(ret, "{%") {
-		return RenderTemplate(ret, ctx)
+		return RenderTemplate(ret, ctx, recursionLimit-1)
 	}
 
-	return ret, err
+	return ret, nil
 }
 
 // GetExpiry returns the expiry date based on the reference date and a length of time.
@@ -1474,8 +1494,9 @@ func JoinTokenDecode(input string) (*api.ClusterMemberJoinToken, error) {
 // TargetDetect returns either target node or group based on the provided prefix:
 // An invocation with `target=h1` returns "h1", "" and `target=@g1` returns "", "g1".
 func TargetDetect(target string) (targetNode string, targetGroup string) {
-	if strings.HasPrefix(target, "@") {
-		targetGroup = strings.TrimPrefix(target, "@")
+	after, found := strings.CutPrefix(target, "@")
+	if found {
+		targetGroup = after
 	} else {
 		targetNode = target
 	}
