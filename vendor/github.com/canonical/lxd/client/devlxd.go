@@ -1,9 +1,7 @@
 package lxd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +35,11 @@ type ProtocolDevLXD struct {
 
 	// isDevLXDOverVsock indicates whether the devLXD connection is over vsock.
 	isDevLXDOverVsock bool
+
+	bearerToken string
+
+	// clusterTarget is the name of the cluster member that this client is targeting.
+	clusterTarget string
 }
 
 // GetConnectionInfo returns the basic connection information used to interact with the server.
@@ -45,6 +48,7 @@ func (r *ProtocolDevLXD) GetConnectionInfo() (*ConnectionInfo, error) {
 		Protocol:   "devlxd",
 		URL:        r.httpBaseURL.String(),
 		SocketPath: r.httpUnixPath,
+		Target:     r.clusterTarget,
 	}, nil
 }
 
@@ -72,6 +76,22 @@ func (r *ProtocolDevLXD) Disconnect() {
 	r.ctxConnectedCancel()
 }
 
+// UseTarget returns a client that will target a specific cluster member.
+// Use this for member-specific operations such as creating a local storage
+// volume on a specific cluster member.
+func (r *ProtocolDevLXD) UseTarget(name string) DevLXDServer {
+	server := *r
+	server.clusterTarget = name
+	return &server
+}
+
+// UseBearerToken returns a client that will use the provided bearer token for authentication.
+func (r *ProtocolDevLXD) UseBearerToken(bearerToken string) DevLXDServer {
+	server := *r
+	server.bearerToken = bearerToken
+	return &server
+}
+
 // RawQuery allows directly querying the devLXD.
 //
 // This should only be used by internal LXD tools.
@@ -85,8 +105,6 @@ func (r *ProtocolDevLXD) RawQuery(method string, path string, data any, ETag str
 // type and handles the HTTP response, returning parsed results or an error
 // if it occurs.
 func (r *ProtocolDevLXD) rawQuery(method string, url string, data any, ETag string) (devLXDResp *api.DevLXDResponse, etag string, err error) {
-	var req *http.Request
-
 	// Log the request
 	logger.Debug("Sending request to devLXD", logger.Ctx{
 		"method": method,
@@ -94,35 +112,15 @@ func (r *ProtocolDevLXD) rawQuery(method string, url string, data any, ETag stri
 		"etag":   ETag,
 	})
 
-	// Get a new HTTP request setup
-	if data != nil {
-		// Encode the provided data
-		buf := bytes.Buffer{}
-		err := json.NewEncoder(&buf).Encode(data)
-		if err != nil {
-			return nil, "", err
-		}
-
-		// Some data to be sent along with the request
-		// Use a reader since the request body needs to be seekable
-		req, err = http.NewRequestWithContext(r.ctx, method, url, bytes.NewReader(buf.Bytes()))
-		if err != nil {
-			return nil, "", err
-		}
-
-		// Set the encoding accordingly
-		req.Header.Set("Content-Type", "application/json")
-	} else {
-		// No data to be sent along with the request
-		req, err = http.NewRequestWithContext(r.ctx, method, url, nil)
-		if err != nil {
-			return nil, "", err
-		}
+	// Setup new request.
+	req, err := NewRequestWithContext(r.ctx, method, url, data, ETag)
+	if err != nil {
+		return nil, "", err
 	}
 
-	// Set the ETag.
-	if ETag != "" {
-		req.Header.Set("If-Match", ETag)
+	// Set the bearer token
+	if r.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+r.bearerToken)
 	}
 
 	req.Header.Set("User-Agent", r.httpUserAgent)
@@ -240,8 +238,8 @@ func (r *ProtocolDevLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 	}
 
 	// Set TCP timeout options.
-	remoteTCP, _ := tcp.ExtractConn(conn.UnderlyingConn())
-	if remoteTCP != nil {
+	remoteTCP, err := tcp.ExtractConn(conn.NetConn())
+	if err == nil && remoteTCP != nil {
 		err = tcp.SetTimeouts(remoteTCP, 0)
 		if err != nil {
 			logger.Warn("Failed setting TCP timeouts on remote connection", logger.Ctx{"err": err})
@@ -252,6 +250,16 @@ func (r *ProtocolDevLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 	logger.Debugf("Connected to the websocket: %v", url)
 
 	return conn, nil
+}
+
+// setURLQueryAttributes modifies the supplied URL's query string with the client's current target.
+func (r *ProtocolDevLXD) setURLQueryAttributes(url *url.URL) {
+	values := url.Query()
+	if r.clusterTarget != "" && values.Get("target") == "" {
+		values.Set("target", r.clusterTarget)
+	}
+
+	url.RawQuery = values.Encode()
 }
 
 // devLXDParseResponse processes the HTTP response from the devLXD. It reads the response body,

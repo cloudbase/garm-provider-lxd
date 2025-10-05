@@ -341,7 +341,7 @@ type InstanceServer interface {
 	CreateProject(project api.ProjectsPost) (err error)
 	UpdateProject(name string, project api.ProjectPut, ETag string) (err error)
 	RenameProject(name string, project api.ProjectPost) (op Operation, err error)
-	DeleteProject(name string) (err error)
+	DeleteProject(name string, force bool) (err error)
 
 	// Storage pool functions ("storage" API extension)
 	GetStoragePoolNames() (names []string, err error)
@@ -409,6 +409,8 @@ type InstanceServer interface {
 
 	// Storage volume ISO import function ("custom_volume_iso" API extension)
 	CreateStoragePoolVolumeFromISO(pool string, args StoragePoolVolumeBackupArgs) (op Operation, err error)
+	// Storage volume tar import function ("import_custom_volume_tar" API extension)
+	CreateStoragePoolVolumeFromTarball(pool string, args StoragePoolVolumeBackupArgs) (op Operation, err error)
 
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)
@@ -456,15 +458,24 @@ type InstanceServer interface {
 	DeleteIdentity(authenticationMethod string, nameOrIdentifier string) error
 	CreateIdentityTLS(identitiesTLSPost api.IdentitiesTLSPost) error
 	CreateIdentityTLSToken(identitiesTLSPost api.IdentitiesTLSPost) (*api.CertificateAddToken, error)
+	CreateIdentityBearer(identitiesBearerPost api.IdentitiesBearerPost) error
+	IssueBearerIdentityToken(nameOrIdentifier string, identityBearerTokenPost api.IdentityBearerTokenPost) (*api.IdentityBearerToken, error)
+	RevokeBearerIdentityToken(nameOrIdentifier string) error
 	GetIdentityProviderGroupNames() (identityProviderGroupNames []string, err error)
 	GetIdentityProviderGroups() (identityProviderGroups []api.IdentityProviderGroup, err error)
 	GetIdentityProviderGroup(identityProviderGroupName string) (identityProviderGroup *api.IdentityProviderGroup, ETag string, err error)
-	CreateIdentityProviderGroup(identityProviderGroup api.IdentityProviderGroup) error
+	CreateIdentityProviderGroup(identityProviderGroup api.IdentityProviderGroupsPost) error
 	UpdateIdentityProviderGroup(identityProviderGroupName string, identityProviderGroupPut api.IdentityProviderGroupPut, ETag string) error
 	RenameIdentityProviderGroup(identityProviderGroupName string, identityProviderGroupPost api.IdentityProviderGroupPost) error
 	DeleteIdentityProviderGroup(identityProviderGroupName string) error
 	GetPermissions(args GetPermissionsArgs) (permissions []api.Permission, err error)
 	GetPermissionsInfo(args GetPermissionsArgs) (permissions []api.PermissionInfo, err error)
+	GetOIDCSessionUUIDs() (uuids []string, err error)
+	GetOIDCSessionUUIDsByEmail(email string) (uuids []string, err error)
+	GetOIDCSessions() (sessions []api.OIDCSession, err error)
+	GetOIDCSessionsByEmail(email string) (sessions []api.OIDCSession, err error)
+	GetOIDCSession(sessionID string) (session *api.OIDCSession, err error)
+	DeleteOIDCSession(sessionID string) error
 
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data any, queryETag string) (resp *api.Response, ETag string, err error)
@@ -475,6 +486,10 @@ type InstanceServer interface {
 // The DevLXDServer type represents a devLXD server.
 type DevLXDServer interface {
 	Server
+
+	// Client configuration.
+	UseTarget(name string) (client DevLXDServer)
+	UseBearerToken(bearerToken string) (client DevLXDServer)
 
 	// DevLXD info/state.
 	GetState() (state *api.DevLXDGet, err error)
@@ -496,6 +511,20 @@ type DevLXDServer interface {
 
 	// DevLXD images.
 	GetImageFile(fingerprint string, req ImageFileRequest) (resp *ImageFileResponse, err error)
+
+	// DevLXD instance devices.
+	GetInstance(instName string) (inst *api.DevLXDInstance, etag string, err error)
+	UpdateInstance(instName string, inst api.DevLXDInstancePut, ETag string) error
+
+	// DevLXD storage pools.
+	GetStoragePool(poolName string) (pool *api.DevLXDStoragePool, ETag string, err error)
+
+	// DevLXD storage volumes.
+	GetStoragePoolVolumes(poolName string) (vols []api.DevLXDStorageVolume, err error)
+	GetStoragePoolVolume(poolName string, volType string, volName string) (vol *api.DevLXDStorageVolume, ETag string, err error)
+	CreateStoragePoolVolume(poolName string, vol api.DevLXDStorageVolumesPost) error
+	UpdateStoragePoolVolume(poolName string, volType string, volName string, vol api.DevLXDStorageVolumePut, ETag string) error
+	DeleteStoragePoolVolume(poolName string, volType string, volName string) error
 
 	// DevLXD Ubuntu Pro.
 	GetUbuntuPro() (*api.DevLXDUbuntuProSettings, error)
