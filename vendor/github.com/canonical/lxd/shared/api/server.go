@@ -1,5 +1,13 @@
 package api
 
+const (
+	// AuthTrusted is the value of [ServerUntrusted.Auth] returned by the server when the client has authenticated.
+	AuthTrusted = "trusted"
+
+	// AuthUntrusted is the value of [ServerUntrusted.Auth] returned by the server when the client not authenticated.
+	AuthUntrusted = "untrusted"
+)
+
 // ServerEnvironment represents the read-only environment fields of a LXD server.
 type ServerEnvironment struct {
 	// List of addresses the server is listening on
@@ -209,6 +217,10 @@ type ServerUntrusted struct {
 	//
 	// API extension: client_cert_presence
 	ClientCertificate bool `json:"client_certificate" yaml:"client_certificate"`
+
+	// Server configuration map (refer to doc/server.md) The available fields for public endpoint (before authentication) are limited.
+	// Example: {"user.microcloud": "true"}
+	Config map[string]any `json:"config" yaml:"config"`
 }
 
 // Server represents a LXD server
@@ -216,7 +228,6 @@ type ServerUntrusted struct {
 // swagger:model
 type Server struct {
 	WithEntitlements `yaml:",inline"`
-	ServerPut        `yaml:",inline"`
 	ServerUntrusted  `yaml:",inline"`
 
 	// The current user username as seen by LXD
@@ -240,5 +251,7 @@ type Server struct {
 
 // Writable converts a full Server struct into a ServerPut struct (filters read-only fields).
 func (srv *Server) Writable() ServerPut {
-	return srv.ServerPut
+	return ServerPut{
+		Config: srv.Config,
+	}
 }

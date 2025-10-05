@@ -1,12 +1,10 @@
 package lxd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	neturl "net/url"
 	"slices"
@@ -229,9 +227,6 @@ func lxdParseResponse(resp *http.Response) (*api.Response, string, error) {
 // rawQuery is a method that sends an HTTP request to the LXD server with the provided method, URL, data, and ETag.
 // It processes the request based on the data's type and handles the HTTP response, returning parsed results or an error if it occurs.
 func (r *ProtocolLXD) rawQuery(method string, url string, data any, ETag string) (*api.Response, string, error) {
-	var req *http.Request
-	var err error
-
 	// Log the request
 	logger.Debug("Sending request to LXD", logger.Ctx{
 		"method": method,
@@ -239,47 +234,10 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data any, ETag string)
 		"etag":   ETag,
 	})
 
-	// Get a new HTTP request setup
-	if data != nil {
-		switch data := data.(type) {
-		case io.Reader:
-			// Some data to be sent along with the request
-			req, err = http.NewRequestWithContext(r.ctx, method, url, data)
-			if err != nil {
-				return nil, "", err
-			}
-
-			// Set the encoding accordingly
-			req.Header.Set("Content-Type", "application/octet-stream")
-		default:
-			// Encode the provided data
-			buf := bytes.Buffer{}
-			err := json.NewEncoder(&buf).Encode(data)
-			if err != nil {
-				return nil, "", err
-			}
-
-			// Some data to be sent along with the request
-			// Use a reader since the request body needs to be seekable
-			req, err = http.NewRequestWithContext(r.ctx, method, url, bytes.NewReader(buf.Bytes()))
-			if err != nil {
-				return nil, "", err
-			}
-
-			// Set the encoding accordingly
-			req.Header.Set("Content-Type", "application/json")
-		}
-	} else {
-		// No data to be sent along with the request
-		req, err = http.NewRequestWithContext(r.ctx, method, url, nil)
-		if err != nil {
-			return nil, "", err
-		}
-	}
-
-	// Set the ETag
-	if ETag != "" {
-		req.Header.Set("If-Match", ETag)
+	// Setup new request.
+	req, err := NewRequestWithContext(r.ctx, method, url, data, ETag)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// Send the request
@@ -288,7 +246,12 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data any, ETag string)
 		return nil, "", err
 	}
 
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			logger.Debug("Failed to close response body", logger.Ctx{"err": err})
+		}
+	}()
 
 	return lxdParseResponse(resp)
 }
@@ -365,8 +328,14 @@ func (r *ProtocolLXD) queryStruct(method string, path string, data any, ETag str
 func (r *ProtocolLXD) queryOperation(method string, path string, data any, ETag string, useEventListener bool) (Operation, string, error) {
 	// Attempt to setup an early event listener if requested.
 	var listener *EventListener
+	var err error
+
 	if useEventListener {
-		listener, _ = r.GetEvents()
+		listener, err = r.GetEvents()
+
+		if err != nil {
+			logger.Debug("Failed to get events", logger.Ctx{"err": err})
+		}
 	}
 
 	// Send the query
@@ -438,8 +407,8 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 	}
 
 	// Set TCP timeout options.
-	remoteTCP, _ := tcp.ExtractConn(conn.UnderlyingConn())
-	if remoteTCP != nil {
+	remoteTCP, err := tcp.ExtractConn(conn.NetConn())
+	if err == nil && remoteTCP != nil {
 		err = tcp.SetTimeouts(remoteTCP, 0)
 		if err != nil {
 			logger.Warn("Failed setting TCP timeouts on remote connection", logger.Ctx{"err": err})

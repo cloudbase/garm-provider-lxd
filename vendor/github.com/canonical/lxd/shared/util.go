@@ -52,11 +52,6 @@ const HTTPSMetricsDefaultPort = 9100
 // HTTPSStorageBucketsDefaultPort is the default port for the storage buckets listener.
 const HTTPSStorageBucketsDefaultPort = 9000
 
-// RenderTemplateRecursionLimit is the suggested maximum recursion depth for rendering templates.
-// Prevent unbounded recursion while rendering templates. Normal use should not
-// require more than 1 or 2 levels of recursion.
-const RenderTemplateRecursionLimit = 5
-
 // URLEncode encodes a path and query parameters to a URL.
 func URLEncode(path string, query map[string]string) (string, error) {
 	u, err := url.Parse(path)
@@ -742,7 +737,9 @@ func StringPrefixInSlice(key string, list []string) bool {
 
 // RemoveElementsFromSlice returns a slice equivalent to removing the given elements from the given list.
 // Elements not present in the list are ignored.
+// The input slice is cloned to avoid modifying the original slice.
 func RemoveElementsFromSlice[T comparable](list []T, elements ...T) []T {
+	list = slices.Clone(list)
 	for i := len(elements) - 1; i >= 0; i-- {
 		element := elements[i]
 		match := false
@@ -798,11 +795,6 @@ func IsFalse(value string) bool {
 // IsFalseOrEmpty returns true if value is empty or if IsFalse() returns true.
 func IsFalseOrEmpty(value string) bool {
 	return value == "" || IsFalse(value)
-}
-
-// IsUserConfig returns true if the key starts with the prefix "user.".
-func IsUserConfig(key string) bool {
-	return strings.HasPrefix(key, "user.")
 }
 
 // StringMapHasStringKey returns true if any of the supplied keys are present in the map.
@@ -1328,10 +1320,15 @@ func (r *ReadSeeker) Seek(offset int64, whence int) (int64, error) {
 }
 
 // RenderTemplate renders a pongo2 template.
-func RenderTemplate(template string, ctx pongo2.Context, recursionLimit int) (string, error) {
-	if recursionLimit <= 0 {
-		return "", errors.New("Recursion limit reached while rendering template")
-	}
+func RenderTemplate(template string, ctx pongo2.Context) (output string, err error) {
+	defer func() {
+		// Capture panics in the pongo2 template rendering.
+		// This is to prevent the server from crashing due to a template error.
+		r := recover()
+		if r != nil {
+			err = fmt.Errorf("Panic while rendering template: %v", r)
+		}
+	}()
 
 	// Create custom TemplateSet
 	set := pongo2.NewSet("restricted", pongo2.DefaultLoader)
@@ -1344,24 +1341,31 @@ func RenderTemplate(template string, ctx pongo2.Context, recursionLimit int) (st
 		}
 	}
 
-	// Load template from string
-	tpl, err := set.FromString("{% autoescape off %}" + template + "{% endautoescape %}")
-	if err != nil {
-		return "", err
+	// Prevent unbounded recursion while rendering templates. Normal use should not
+	// require more than 1 or 2 levels of recursion.
+	for range 3 {
+		// Load template from string
+		tpl, err := set.FromString("{% autoescape off %}" + template + "{% endautoescape %}")
+		if err != nil {
+			return "", err
+		}
+
+		// Get rendered template
+		ret, err := tpl.Execute(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		// Check if another pass is needed.
+		if !strings.Contains(ret, "{{") && !strings.Contains(ret, "{%") {
+			return ret, nil
+		}
+
+		// Prepare for another pass.
+		template = ret
 	}
 
-	// Get rendered template
-	ret, err := tpl.Execute(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	// Looks like we're nesting templates so run pongo again
-	if strings.Contains(ret, "{{") || strings.Contains(ret, "{%") {
-		return RenderTemplate(ret, ctx, recursionLimit-1)
-	}
-
-	return ret, nil
+	return "", errors.New("Recursion limit reached while rendering template")
 }
 
 // GetExpiry returns the expiry date based on the reference date and a length of time.
