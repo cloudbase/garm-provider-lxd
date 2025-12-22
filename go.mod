@@ -3,7 +3,7 @@ module github.com/cloudbase/garm-provider-lxd
 go 1.24.6
 
 require (
-	github.com/BurntSushi/toml v1.5.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/canonical/lxd v0.0.0-20251004041937-09b541206e2d
 	github.com/cloudbase/garm-provider-common v0.1.8-0.20251001105909-bbcacae60e7c
 	github.com/gorilla/websocket v1.5.4-0.20240702125206-a62d9d2a8413
