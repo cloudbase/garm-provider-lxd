@@ -34,6 +34,13 @@ type RemoteOperation interface {
 	Wait() (err error)
 }
 
+// The DevLXDOperation type is a DevLXD representation of a LXD [Operation].
+type DevLXDOperation interface {
+	Get() (op api.DevLXDOperation)
+	Cancel() (err error)
+	WaitContext(ctx context.Context) error
+}
+
 // The Server type represents a generic read-only server.
 type Server interface {
 	GetConnectionInfo() (info *ConnectionInfo, err error)
@@ -201,7 +208,7 @@ type InstanceServer interface {
 	CopyInstanceSnapshot(source InstanceServer, instanceName string, snapshot api.InstanceSnapshot, args *InstanceSnapshotCopyArgs) (op RemoteOperation, err error)
 	RenameInstanceSnapshot(instanceName string, name string, instance api.InstanceSnapshotPost) (op Operation, err error)
 	MigrateInstanceSnapshot(instanceName string, name string, instance api.InstanceSnapshotPost) (op Operation, err error)
-	DeleteInstanceSnapshot(instanceName string, name string) (op Operation, err error)
+	DeleteInstanceSnapshot(instanceName string, name string, diskVolumesMode string) (op Operation, err error)
 	UpdateInstanceSnapshot(instanceName string, name string, instance api.InstanceSnapshotPut, ETag string) (op Operation, err error)
 
 	GetInstanceBackupNames(instanceName string) (names []string, err error)
@@ -329,7 +336,7 @@ type InstanceServer interface {
 	GetProfiles() (profiles []api.Profile, err error)
 	GetProfile(name string) (profile *api.Profile, ETag string, err error)
 	CreateProfile(profile api.ProfilesPost) (err error)
-	UpdateProfile(name string, profile api.ProfilePut, ETag string) (err error)
+	UpdateProfile(name string, profile api.ProfilePut, ETag string) (op Operation, err error)
 	RenameProfile(name string, profile api.ProfilePost) (err error)
 	DeleteProfile(name string) (err error)
 
@@ -380,10 +387,10 @@ type InstanceServer interface {
 	GetStoragePoolVolumesWithFilterAllProjects(pool string, filters []string) (volumes []api.StorageVolume, err error)
 	GetStoragePoolVolume(pool string, volType string, name string) (volume *api.StorageVolume, ETag string, err error)
 	GetStoragePoolVolumeState(pool string, volType string, name string) (state *api.StorageVolumeState, err error)
-	CreateStoragePoolVolume(pool string, volume api.StorageVolumesPost) (err error)
-	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (err error)
-	DeleteStoragePoolVolume(pool string, volType string, name string) (err error)
-	RenameStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePost) (err error)
+	CreateStoragePoolVolume(pool string, volume api.StorageVolumesPost) (op Operation, err error)
+	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (op Operation, err error)
+	RenameStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePost) (op Operation, err error)
+	DeleteStoragePoolVolume(pool string, volType string, name string) (op Operation, err error)
 	CopyStoragePoolVolume(pool string, source InstanceServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeCopyArgs) (op RemoteOperation, err error)
 	MoveStoragePoolVolume(pool string, source InstanceServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeMoveArgs) (op RemoteOperation, err error)
 	MigrateStoragePoolVolume(pool string, volume api.StorageVolumePost) (op Operation, err error)
@@ -395,7 +402,7 @@ type InstanceServer interface {
 	GetStoragePoolVolumeSnapshots(pool string, volumeType string, volumeName string) (snapshots []api.StorageVolumeSnapshot, err error)
 	GetStoragePoolVolumeSnapshot(pool string, volumeType string, volumeName string, snapshotName string) (snapshot *api.StorageVolumeSnapshot, ETag string, err error)
 	RenameStoragePoolVolumeSnapshot(pool string, volumeType string, volumeName string, snapshotName string, snapshot api.StorageVolumeSnapshotPost) (op Operation, err error)
-	UpdateStoragePoolVolumeSnapshot(pool string, volumeType string, volumeName string, snapshotName string, volume api.StorageVolumeSnapshotPut, ETag string) (err error)
+	UpdateStoragePoolVolumeSnapshot(pool string, volumeType string, volumeName string, snapshotName string, volume api.StorageVolumeSnapshotPut, ETag string) (op Operation, err error)
 
 	// Storage volume backup functions ("custom_volume_backup" API extension)
 	GetStoragePoolVolumeBackupNames(pool string, volName string) (names []string, err error)
@@ -477,6 +484,17 @@ type InstanceServer interface {
 	GetOIDCSession(sessionID string) (session *api.OIDCSession, err error)
 	DeleteOIDCSession(sessionID string) error
 
+	// Placement groups
+	GetPlacementGroupNames() (placementGroupNames []string, err error)
+	GetPlacementGroupNamesAllProjects() (projectToPlacementGroups map[string][]string, err error)
+	GetPlacementGroups() (placementGroups []api.PlacementGroup, err error)
+	GetPlacementGroupsAllProjects() (placementGroups []api.PlacementGroup, err error)
+	GetPlacementGroup(placementGroupName string) (placementGroup *api.PlacementGroup, ETag string, err error)
+	CreatePlacementGroup(placementGroupsPost api.PlacementGroupsPost) error
+	UpdatePlacementGroup(placementGroupName string, placementGroupPut api.PlacementGroupPut, ETag string) error
+	DeletePlacementGroup(placementGroupName string) error
+	RenamePlacementGroup(placementGroupName string, placementGroupPost api.PlacementGroupPost) error
+
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data any, queryETag string) (resp *api.Response, ETag string, err error)
 	RawWebsocket(path string) (conn *websocket.Conn, err error)
@@ -522,9 +540,19 @@ type DevLXDServer interface {
 	// DevLXD storage volumes.
 	GetStoragePoolVolumes(poolName string) (vols []api.DevLXDStorageVolume, err error)
 	GetStoragePoolVolume(poolName string, volType string, volName string) (vol *api.DevLXDStorageVolume, ETag string, err error)
-	CreateStoragePoolVolume(poolName string, vol api.DevLXDStorageVolumesPost) error
-	UpdateStoragePoolVolume(poolName string, volType string, volName string, vol api.DevLXDStorageVolumePut, ETag string) error
-	DeleteStoragePoolVolume(poolName string, volType string, volName string) error
+	CreateStoragePoolVolume(poolName string, vol api.DevLXDStorageVolumesPost) (DevLXDOperation, error)
+	UpdateStoragePoolVolume(poolName string, volType string, volName string, vol api.DevLXDStorageVolumePut, ETag string) (DevLXDOperation, error)
+	DeleteStoragePoolVolume(poolName string, volType string, volName string) (DevLXDOperation, error)
+
+	// DevLXD storage volume snapshots.
+	GetStoragePoolVolumeSnapshots(poolName string, volType string, volName string) (snapshots []api.DevLXDStorageVolumeSnapshot, err error)
+	GetStoragePoolVolumeSnapshot(poolName string, volType string, volName string, snapshotName string) (snapshot *api.DevLXDStorageVolumeSnapshot, ETag string, err error)
+	CreateStoragePoolVolumeSnapshot(poolName string, volType string, volName string, snapshot api.DevLXDStorageVolumeSnapshotsPost) (op DevLXDOperation, err error)
+	DeleteStoragePoolVolumeSnapshot(poolName string, volType string, volName string, snapshotName string) (op DevLXDOperation, err error)
+
+	// DevLXD operations.
+	GetOperationWait(uuid string, timeout int) (*api.DevLXDOperation, string, error)
+	DeleteOperation(uuid string) error
 
 	// DevLXD Ubuntu Pro.
 	GetUbuntuPro() (*api.DevLXDUbuntuProSettings, error)
@@ -716,6 +744,10 @@ type InstanceCopyArgs struct {
 	// API extension: override_snapshot_profiles_on_copy
 	// If set, snapshots of the instance copy receive profiles of the target instance
 	OverrideSnapshotProfiles bool
+
+	// Whether to start the instance after copy.
+	// This was made possible by adding the instance_create_start API extension.
+	Start bool
 }
 
 // The InstanceSnapshotCopyArgs struct is used to pass additional options during instance copy.
@@ -729,6 +761,10 @@ type InstanceSnapshotCopyArgs struct {
 	// API extension: container_snapshot_stateful_migration
 	// If set, the instance running state will be transferred (live migration)
 	Live bool
+
+	// Whether to start the instance after copy.
+	// This was made possible by adding the instance_create_start API extension.
+	Start bool
 }
 
 // The InstanceConsoleArgs struct is used to pass additional options during a

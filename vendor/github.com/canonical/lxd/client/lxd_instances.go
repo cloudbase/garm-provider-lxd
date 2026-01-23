@@ -891,6 +891,8 @@ func (r *ProtocolLXD) CopyInstance(source InstanceServer, instance api.Instance,
 			}
 		}
 
+		req.Start = args.Start
+
 		// Allow overriding the target name
 		if args.Name != "" {
 			req.Name = args.Name
@@ -1091,6 +1093,13 @@ func (r *ProtocolLXD) UpdateInstance(name string, instance api.InstancePut, ETag
 	path, _, err := r.instanceTypeToPath(api.InstanceTypeAny)
 	if err != nil {
 		return nil, err
+	}
+
+	if instance.RestoreDiskVolumesMode == api.DiskVolumesModeAllExclusive {
+		err = r.CheckExtension("instance_snapshots_multi_volume")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Send the request
@@ -1930,6 +1939,13 @@ func (r *ProtocolLXD) CreateInstanceSnapshot(instanceName string, snapshot api.I
 		}
 	}
 
+	if snapshot.DiskVolumesMode == api.DiskVolumesModeAllExclusive {
+		err = r.CheckExtension("instance_snapshots_multi_volume")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Send the request
 	op, _, err := r.queryOperation(http.MethodPost, path+"/"+url.PathEscape(instanceName)+"/snapshots", snapshot, "", true)
 	if err != nil {
@@ -1992,6 +2008,8 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 		if args.Name != "" {
 			req.Name = args.Name
 		}
+
+		req.Start = args.Start
 	}
 
 	sourceInfo, err := source.GetConnectionInfo()
@@ -2281,14 +2299,26 @@ func (r *ProtocolLXD) MigrateInstanceSnapshot(instanceName string, name string, 
 }
 
 // DeleteInstanceSnapshot requests that LXD deletes the instance snapshot.
-func (r *ProtocolLXD) DeleteInstanceSnapshot(instanceName string, name string) (Operation, error) {
+func (r *ProtocolLXD) DeleteInstanceSnapshot(instanceName string, name string, diskVolumesMode string) (Operation, error) {
 	path, _, err := r.instanceTypeToPath(api.InstanceTypeAny)
 	if err != nil {
 		return nil, err
 	}
 
+	instanceType := strings.TrimPrefix(path, "/")
+	u := api.NewURL().Path(instanceType, instanceName, "snapshots", name).WithQuery("disk-volumes", diskVolumesMode)
+
+	if diskVolumesMode == api.DiskVolumesModeAllExclusive {
+		err := r.CheckExtension("instance_snapshots_multi_volume")
+		if err != nil {
+			return nil, err
+		}
+
+		u = u.WithQuery("disk-volumes", diskVolumesMode)
+	}
+
 	// Send the request
-	op, _, err := r.queryOperation(http.MethodDelete, path+"/"+url.PathEscape(instanceName)+"/snapshots/"+url.PathEscape(name), nil, "", true)
+	op, _, err := r.queryOperation(http.MethodDelete, u.String(), nil, "", true)
 	if err != nil {
 		return nil, err
 	}
