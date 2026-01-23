@@ -162,7 +162,7 @@ type ClusterMember struct {
 	// Example: https://10.0.0.1:8443
 	URL string `json:"url" yaml:"url"`
 
-	// Whether the cluster member is a database server
+	// Whether the cluster member is a database server (database-leader, database-voter, or database-standby)
 	// Example: true
 	Database bool `json:"database" yaml:"database"`
 
@@ -273,6 +273,26 @@ type ClusterCertificatePut struct {
 	// Example: X509 PEM certificate key
 	ClusterCertificateKey string `json:"cluster_certificate_key" yaml:"cluster_certificate_key"`
 }
+
+const (
+	// ClusterEvacuateModeStop indicates that all instances on the evacuated member should be stopped.
+	ClusterEvacuateModeStop = "stop"
+
+	// ClusterEvacuateModeMigrate indicates that all instances on the evacuated member should be migrated to other members.
+	ClusterEvacuateModeMigrate = "migrate"
+
+	// ClusterEvacuateModeLiveMigrate indicates that all instances on the evacuated member should be live-migrated to other members.
+	ClusterEvacuateModeLiveMigrate = "live-migrate"
+
+	// ClusterEvacuateModeAuto indicates that the system should automatically choose the best evacuation method for the instance based on instance type and device capabilities.
+	ClusterEvacuateModeAuto = "auto"
+
+	// ClusterEvacuateModeHeal is used internally to indicate that instances should be evacuated during automatic cluster healing.
+	ClusterEvacuateModeHeal = "heal"
+
+	// ClusterRestoreModeSkip indicates that cluster member status should be restored without starting local instances or migrating back evacuated instances.
+	ClusterRestoreModeSkip = "skip"
+)
 
 // ClusterMemberStatePost represents the fields required to evacuate a cluster member.
 //
