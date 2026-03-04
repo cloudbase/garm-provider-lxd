@@ -50,12 +50,12 @@ func (m *MockLXDServer) GetInstanceFull(projectName string) (*api.InstanceFull, 
 	return args.Get(0).(*api.InstanceFull), args.Get(1).(string), args.Error(2)
 }
 
-func (m *MockLXDServer) DeleteInstance(projectName string) (lxd.Operation, error) {
-	args := m.Called(projectName)
+func (m *MockLXDServer) DeleteInstance(projectName string, force bool) (lxd.Operation, error) {
+	args := m.Called(projectName, force)
 	return args.Get(0).(lxd.Operation), args.Error(1)
 }
 
-func (m *MockLXDServer) GetInstancesFull(instanceType api.InstanceType) ([]api.InstanceFull, error) {
-	args := m.Called(instanceType)
+func (m *MockLXDServer) GetInstancesFull(getArgs lxd.GetInstancesFullArgs) ([]api.InstanceFull, error) {
+	args := m.Called(getArgs)
 	return args.Get(0).([]api.InstanceFull), args.Error(1)
 }

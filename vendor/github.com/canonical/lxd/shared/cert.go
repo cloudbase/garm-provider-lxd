@@ -250,6 +250,39 @@ func TestingAltKeyPair() *CertInfo {
 	return cert
 }
 
+// TestingKeyPairWithValidity returns a CertInfo with a certificate valid between notBefore and notAfter.
+// This function is meant to be used only by tests.
+func TestingKeyPairWithValidity(notBefore time.Time, notAfter time.Time) *CertInfo {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate RSA key: %v", err))
+	}
+
+	tpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create x509 certificate: %v", err))
+	}
+
+	keypair := tls.Certificate{
+		Certificate: [][]byte{der},
+		PrivateKey:  priv,
+	}
+
+	return &CertInfo{
+		keypair: keypair,
+	}
+}
+
 // generateSANNames creates a list of names for which the certificate will be valid.
 // - `commonName` will be the first entry if defined, otherwise the hostname will be used.
 // - `additionalNames` will be supplied next, if defined
@@ -507,6 +540,8 @@ func GetRemoteCertificate(ctx context.Context, address string, useragent string)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() { _ = resp.Body.Close() }()
 
 	// Retrieve the certificate
 	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {

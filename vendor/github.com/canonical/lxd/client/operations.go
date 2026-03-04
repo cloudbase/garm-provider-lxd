@@ -25,6 +25,16 @@ type operation struct {
 	chActive chan bool
 }
 
+// disconnectListener disconnects the event listener associated with the operation.
+// It must be called under [operation.handlerLock].
+func (op *operation) disconnectListener() {
+	if op.listener != nil {
+		op.listener.Disconnect()
+		op.listener = nil
+		close(op.chActive)
+	}
+}
+
 // AddHandler adds a function to be called whenever an event is received.
 func (op *operation) AddHandler(function func(api.Operation)) (*EventTarget, error) {
 	if op.skipListener {
@@ -62,7 +72,7 @@ func (op *operation) AddHandler(function func(api.Operation)) (*EventTarget, err
 		function(newOp)
 	}
 
-	return op.listener.AddHandler([]string{"operation"}, wrapped)
+	return op.listener.AddHandler([]string{api.EventTypeOperation}, wrapped)
 }
 
 // Cancel will request that LXD cancels the operation (if supported).
@@ -205,7 +215,7 @@ func (op *operation) setupListener() error {
 
 	// Setup the handler
 	chReady := make(chan bool)
-	_, err := op.listener.AddHandler([]string{"operation"}, func(event api.Event) {
+	_, err := op.listener.AddHandler([]string{api.EventTypeOperation}, func(event api.Event) {
 		<-chReady
 
 		// We don't want concurrency while processing events
@@ -229,16 +239,12 @@ func (op *operation) setupListener() error {
 
 		// And check if we're done
 		if op.StatusCode.IsFinal() {
-			op.listener.Disconnect()
-			op.listener = nil
-			close(op.chActive)
+			op.disconnectListener()
 			return
 		}
 	})
 	if err != nil {
-		op.listener.Disconnect()
-		op.listener = nil
-		close(op.chActive)
+		op.disconnectListener()
 		close(chReady)
 
 		return err
@@ -266,7 +272,7 @@ func (op *operation) setupListener() error {
 			op.handlerLock.Lock()
 			if op.listener != nil {
 				op.Err = listener.err.Error()
-				close(op.chActive)
+				op.disconnectListener()
 			}
 
 			op.handlerLock.Unlock()
@@ -278,9 +284,7 @@ func (op *operation) setupListener() error {
 	// And do a manual refresh to avoid races
 	err = op.Refresh()
 	if err != nil {
-		op.listener.Disconnect()
-		op.listener = nil
-		close(op.chActive)
+		op.disconnectListener()
 		close(chReady)
 
 		return err
@@ -288,9 +292,7 @@ func (op *operation) setupListener() error {
 
 	// Check if not done already
 	if op.StatusCode.IsFinal() {
-		op.listener.Disconnect()
-		op.listener = nil
-		close(op.chActive)
+		op.disconnectListener()
 		close(chReady)
 
 		if op.Err != "" {
@@ -336,7 +338,7 @@ func (op *remoteOperation) AddHandler(function func(api.Operation)) (*EventTarge
 		// Generate a mock EventTarget
 		target = &EventTarget{
 			function: func(api.Event) { function(api.Operation{}) },
-			types:    []string{"operation"},
+			types:    []string{api.EventTypeOperation},
 		}
 	}
 

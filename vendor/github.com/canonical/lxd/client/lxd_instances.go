@@ -30,20 +30,8 @@ import (
 // Instance handling functions.
 
 // instanceTypeToPath converts the instance type to a URL path prefix and query string values.
-// If the remote server doesn't have the instances extension then the /containers endpoint is used
-// as long as the requested instanceType is any or container.
 func (r *ProtocolLXD) instanceTypeToPath(instanceType api.InstanceType) (string, url.Values, error) {
 	v := url.Values{}
-
-	// If the remote server doesn't support instances extension, check that only containers
-	// or any type has been requested and then fallback to using the old /containers endpoint.
-	if r.CheckExtension("instances") != nil {
-		if instanceType == api.InstanceTypeContainer || instanceType == api.InstanceTypeAny {
-			return "/containers", v, nil
-		}
-
-		return "", v, errors.New("Requested instance type not supported by server")
-	}
 
 	// If a specific instance type has been requested, add the instance-type filter parameter
 	// to the returned URL values so that it can be used in the final URL if needed to filter
@@ -99,99 +87,47 @@ func (r *ProtocolLXD) GetInstanceNamesAllProjects(instanceType api.InstanceType)
 	return names, nil
 }
 
+// GetInstancesArgs represents the arguments for GetInstances.
+type GetInstancesArgs struct {
+	// InstanceType filters instances by type (container, virtual-machine, or any).
+	InstanceType api.InstanceType
+
+	// Filters is a list of filter expressions to apply (requires api_filtering extension).
+	Filters []string
+
+	// AllProjects indicates whether to query instances from all projects (requires instance_all_projects extension).
+	AllProjects bool
+}
+
 // GetInstances returns a list of instances.
-func (r *ProtocolLXD) GetInstances(instanceType api.InstanceType) ([]api.Instance, error) {
+func (r *ProtocolLXD) GetInstances(args GetInstancesArgs) ([]api.Instance, error) {
 	instances := []api.Instance{}
 
-	path, v, err := r.instanceTypeToPath(instanceType)
+	path, v, err := r.instanceTypeToPath(args.InstanceType)
 	if err != nil {
 		return nil, err
 	}
 
 	v.Set("recursion", "1")
 
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
+	// Handle all-projects
+	if args.AllProjects {
+		err = r.CheckExtension("instance_all_projects")
+		if err != nil {
+			return nil, err
+		}
+
+		v.Set("all-projects", "true")
 	}
 
-	return instances, nil
-}
+	// Handle filters
+	if len(args.Filters) > 0 {
+		err = r.CheckExtension("api_filtering")
+		if err != nil {
+			return nil, err
+		}
 
-// GetInstancesWithFilter returns a filtered list of instances.
-func (r *ProtocolLXD) GetInstancesWithFilter(instanceType api.InstanceType, filters []string) ([]api.Instance, error) {
-	err := r.CheckExtension("api_filtering")
-	if err != nil {
-		return nil, err
-	}
-
-	instances := []api.Instance{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "1")
-	v.Set("filter", parseFilters(filters))
-
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
-	}
-
-	return instances, nil
-}
-
-// GetInstancesAllProjects returns a list of instances from all projects.
-func (r *ProtocolLXD) GetInstancesAllProjects(instanceType api.InstanceType) ([]api.Instance, error) {
-	instances := []api.Instance{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "1")
-	v.Set("all-projects", "true")
-
-	err = r.CheckExtension("instance_all_projects")
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
-	}
-
-	return instances, nil
-}
-
-// GetInstancesAllProjectsWithFilter returns a filtered list of instances from all projects.
-func (r *ProtocolLXD) GetInstancesAllProjectsWithFilter(instanceType api.InstanceType, filters []string) ([]api.Instance, error) {
-	err := r.CheckExtension("api_filtering")
-	if err != nil {
-		return nil, err
-	}
-
-	instances := []api.Instance{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "1")
-	v.Set("all-projects", "true")
-	v.Set("filter", parseFilters(filters))
-
-	err = r.CheckExtension("instance_all_projects")
-	if err != nil {
-		return nil, err
+		v.Set("filter", parseFilters(args.Filters))
 	}
 
 	// Fetch the raw value
@@ -345,117 +281,67 @@ func (r *ProtocolLXD) RebuildInstance(instanceName string, instance api.Instance
 	return r.rebuildInstance(instanceName, instance)
 }
 
+// GetInstancesFullArgs represents the arguments for GetInstancesFull.
+type GetInstancesFullArgs struct {
+	// InstanceType filters instances by type (container, virtual-machine, or any).
+	InstanceType api.InstanceType
+
+	// Filters is a list of filter expressions to apply (requires api_filtering extension).
+	Filters []string
+
+	// AllProjects indicates whether to query instances from all projects (requires instance_all_projects extension).
+	AllProjects bool
+
+	// Fields specifies which state fields to fetch (requires instances_state_selective_recursion extension).
+	// Examples: []string{"state.disk"}, []string{"state.network"}, []string{"state.disk", "state.network"}.
+	// If nil or empty, fetches all fields (default behavior).
+	Fields []string
+}
+
 // GetInstancesFull returns a list of instances including snapshots, backups and state.
-func (r *ProtocolLXD) GetInstancesFull(instanceType api.InstanceType) ([]api.InstanceFull, error) {
+func (r *ProtocolLXD) GetInstancesFull(args GetInstancesFullArgs) ([]api.InstanceFull, error) {
 	instances := []api.InstanceFull{}
 
-	path, v, err := r.instanceTypeToPath(instanceType)
+	path, v, err := r.instanceTypeToPath(args.InstanceType)
 	if err != nil {
 		return nil, err
 	}
 
-	v.Set("recursion", "2")
+	// Set recursion level with optional fields
+	recursionValue := "2"
 
+	// Handle selective fields if specified (nil means default behavior, empty slice means no expensive fields)
+	if args.Fields != nil && r.CheckExtension("instances_state_selective_recursion") == nil {
+		// Use selective recursion if extension is available
+		// Format: recursion=2;fields=state.disk,state.network
+		// An empty slice results in recursion=2;fields= (no expensive fields)
+		recursionValue = "2;fields=" + strings.Join(args.Fields, ",")
+	}
+
+	v.Set("recursion", recursionValue)
+
+	// Handle all-projects
+	if args.AllProjects {
+		err = r.CheckExtension("instance_all_projects")
+		if err != nil {
+			return nil, err
+		}
+
+		v.Set("all-projects", "true")
+	}
+
+	// Handle filters
+	if len(args.Filters) > 0 {
+		err = r.CheckExtension("api_filtering")
+		if err != nil {
+			return nil, err
+		}
+
+		v.Set("filter", parseFilters(args.Filters))
+	}
+
+	// Check for container_full extension
 	err = r.CheckExtension("container_full")
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
-	}
-
-	return instances, nil
-}
-
-// GetInstancesFullWithFilter returns a filtered list of instances including snapshots, backups and state.
-func (r *ProtocolLXD) GetInstancesFullWithFilter(instanceType api.InstanceType, filters []string) ([]api.InstanceFull, error) {
-	err := r.CheckExtension("api_filtering")
-	if err != nil {
-		return nil, err
-	}
-
-	instances := []api.InstanceFull{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "2")
-	v.Set("filter", parseFilters(filters))
-
-	err = r.CheckExtension("container_full")
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
-	}
-
-	return instances, nil
-}
-
-// GetInstancesFullAllProjects returns a list of instances including snapshots, backups and state from all projects.
-func (r *ProtocolLXD) GetInstancesFullAllProjects(instanceType api.InstanceType) ([]api.InstanceFull, error) {
-	instances := []api.InstanceFull{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "2")
-	v.Set("all-projects", "true")
-
-	err = r.CheckExtension("container_full")
-	if err != nil {
-		return nil, err
-	}
-
-	err = r.CheckExtension("instance_all_projects")
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch the raw value
-	_, err = r.queryStruct(http.MethodGet, path+"?"+v.Encode(), nil, "", &instances)
-	if err != nil {
-		return nil, err
-	}
-
-	return instances, nil
-}
-
-// GetInstancesFullAllProjectsWithFilter returns a filtered list of instances including snapshots, backups and state from all projects.
-func (r *ProtocolLXD) GetInstancesFullAllProjectsWithFilter(instanceType api.InstanceType, filters []string) ([]api.InstanceFull, error) {
-	err := r.CheckExtension("api_filtering")
-	if err != nil {
-		return nil, err
-	}
-
-	instances := []api.InstanceFull{}
-
-	path, v, err := r.instanceTypeToPath(instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	v.Set("recursion", "2")
-	v.Set("all-projects", "true")
-	v.Set("filter", parseFilters(filters))
-
-	err = r.CheckExtension("container_full")
-	if err != nil {
-		return nil, err
-	}
-
-	err = r.CheckExtension("instance_all_projects")
 	if err != nil {
 		return nil, err
 	}
@@ -722,17 +608,10 @@ func (r *ProtocolLXD) tryCreateInstance(req api.InstancesPost, urls []string, op
 		return nil, errors.New("The source server isn't listening on the network")
 	}
 
-	rop := remoteOperation{
-		chDone: make(chan bool),
-	}
-
 	operation := req.Source.Operation
 
 	// Forward targetOp to remote op
-	chConnect := make(chan error, 1)
-	chWait := make(chan error, 1)
-
-	go func() {
+	targetOpFunc := func(rop *remoteOperation) error {
 		success := false
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
@@ -771,39 +650,14 @@ func (r *ProtocolLXD) tryCreateInstance(req api.InstancesPost, urls []string, op
 			break
 		}
 
-		if success {
-			chConnect <- nil
-			close(chConnect)
-		} else {
-			chConnect <- remoteOperationError("Failed instance creation", errors)
-			close(chConnect)
-
-			if op != nil {
-				_ = op.Cancel()
-			}
+		if !success {
+			return remoteOperationError("Failed instance creation", errors)
 		}
-	}()
 
-	if op != nil {
-		go func() {
-			chWait <- op.Wait()
-			close(chWait)
-		}()
+		return nil
 	}
 
-	go func() {
-		var err error
-
-		select {
-		case err = <-chConnect:
-		case err = <-chWait:
-		}
-
-		rop.err = err
-		close(rop.chDone)
-	}()
-
-	return &rop, nil
+	return r.startSplitRemoteOperation(targetOpFunc, op), nil
 }
 
 // CreateInstanceFromImage is a convenience function to make it easier to create a instance from an existing image.
@@ -1139,17 +993,10 @@ func (r *ProtocolLXD) tryMigrateInstance(source InstanceServer, name string, req
 		return nil, errors.New("The target server isn't listening on the network")
 	}
 
-	rop := remoteOperation{
-		chDone: make(chan bool),
-	}
-
 	operation := req.Target.Operation
 
 	// Forward targetOp to remote op
-	chConnect := make(chan error, 1)
-	chWait := make(chan error, 1)
-
-	go func() {
+	targetOpFunc := func(rop *remoteOperation) error {
 		success := false
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
@@ -1182,39 +1029,14 @@ func (r *ProtocolLXD) tryMigrateInstance(source InstanceServer, name string, req
 			break
 		}
 
-		if success {
-			chConnect <- nil
-			close(chConnect)
-		} else {
-			chConnect <- remoteOperationError("Failed instance migration", errors)
-			close(chConnect)
-
-			if op != nil {
-				_ = op.Cancel()
-			}
+		if !success {
+			return remoteOperationError("Failed instance migration", errors)
 		}
-	}()
 
-	if op != nil {
-		go func() {
-			chWait <- op.Wait()
-			close(chWait)
-		}()
+		return nil
 	}
 
-	go func() {
-		var err error
-
-		select {
-		case err = <-chConnect:
-		case err = <-chWait:
-		}
-
-		rop.err = err
-		close(rop.chDone)
-	}()
-
-	return &rop, nil
+	return r.startSplitRemoteOperation(targetOpFunc, op), nil
 }
 
 // MigrateInstance requests that LXD prepares for a instance migration.
@@ -1268,14 +1090,51 @@ func (r *ProtocolLXD) MigrateInstance(name string, instance api.InstancePost) (O
 }
 
 // DeleteInstance requests that LXD deletes the instance.
-func (r *ProtocolLXD) DeleteInstance(name string) (Operation, error) {
+func (r *ProtocolLXD) DeleteInstance(name string, force bool) (Operation, error) {
 	path, _, err := r.instanceTypeToPath(api.InstanceTypeAny)
 	if err != nil {
 		return nil, err
 	}
 
+	instanceType := strings.TrimPrefix(path, "/")
+	u := api.NewURL().Path(instanceType, name)
+
+	if force {
+		if r.HasExtension("instance_force_delete") {
+			u = u.WithQuery("force", "1")
+		} else {
+			// Older servers need a forced stop before delete when instance_force_delete isn't supported.
+			ct, _, err := r.GetInstance(name)
+			if err != nil {
+				return nil, err
+			}
+
+			if ct.StatusCode != 0 && ct.StatusCode != api.Stopped {
+				req := api.InstanceStatePut{
+					Action:  "stop",
+					Timeout: -1,
+					Force:   true,
+				}
+
+				op, err := r.UpdateInstanceState(name, req, "")
+				if err != nil {
+					return nil, err
+				}
+
+				err = op.Wait()
+				if err != nil {
+					return nil, fmt.Errorf("Stopping the instance failed: %w", err)
+				}
+
+				if ct.Ephemeral {
+					return op, nil
+				}
+			}
+		}
+	}
+
 	// Send the request
-	op, _, err := r.queryOperation(http.MethodDelete, path+"/"+url.PathEscape(name), nil, "", true)
+	op, _, err := r.queryOperation(http.MethodDelete, u.String(), nil, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -2119,7 +1978,7 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 		target.Certificate = info.Certificate
 		sourceReq.Target = &target
 
-		return r.tryMigrateInstanceSnapshot(source, cName, sName, sourceReq, info.Addresses)
+		return r.tryMigrateInstanceSnapshot(source, cName, sName, sourceReq, info.Addresses, op)
 	}
 
 	// Get source server connection information
@@ -2222,19 +2081,15 @@ func (r *ProtocolLXD) RenameInstanceSnapshot(instanceName string, name string, i
 	return op, nil
 }
 
-func (r *ProtocolLXD) tryMigrateInstanceSnapshot(source InstanceServer, instanceName string, name string, req api.InstanceSnapshotPost, urls []string) (RemoteOperation, error) {
+func (r *ProtocolLXD) tryMigrateInstanceSnapshot(source InstanceServer, instanceName string, name string, req api.InstanceSnapshotPost, urls []string, op Operation) (RemoteOperation, error) {
 	if len(urls) == 0 {
 		return nil, errors.New("The target server isn't listening on the network")
-	}
-
-	rop := remoteOperation{
-		chDone: make(chan bool),
 	}
 
 	operation := req.Target.Operation
 
 	// Forward targetOp to remote op
-	go func() {
+	targetOpFunc := func(rop *remoteOperation) error {
 		success := false
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
@@ -2268,13 +2123,13 @@ func (r *ProtocolLXD) tryMigrateInstanceSnapshot(source InstanceServer, instance
 		}
 
 		if !success {
-			rop.err = remoteOperationError("Failed instance migration", errors)
+			return remoteOperationError("Failed instance migration", errors)
 		}
 
-		close(rop.chDone)
-	}()
+		return nil
+	}
 
-	return &rop, nil
+	return r.startSplitRemoteOperation(targetOpFunc, op), nil
 }
 
 // MigrateInstanceSnapshot requests that LXD prepares for a snapshot migration.

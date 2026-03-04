@@ -101,77 +101,11 @@ type InstanceServer interface {
 	DeleteCertificate(fingerprint string) (err error)
 	CreateCertificateToken(certificate api.CertificatesPost) (op Operation, err error)
 
-	// Container functions
-	//
-	// Deprecated: Those functions are deprecated and won't be updated anymore.
-	// Please use the equivalent Instance function instead.
-	GetContainerNames() (names []string, err error)
-	GetContainers() (containers []api.Container, err error)
-	GetContainersFull() (containers []api.ContainerFull, err error)
-	GetContainer(name string) (container *api.Container, ETag string, err error)
-	CreateContainer(container api.ContainersPost) (op Operation, err error)
-	CreateContainerFromImage(source ImageServer, image api.Image, imgcontainer api.ContainersPost) (op RemoteOperation, err error)
-	CopyContainer(source InstanceServer, container api.Container, args *ContainerCopyArgs) (op RemoteOperation, err error)
-	UpdateContainer(name string, container api.ContainerPut, ETag string) (op Operation, err error)
-	RenameContainer(name string, container api.ContainerPost) (op Operation, err error)
-	MigrateContainer(name string, container api.ContainerPost) (op Operation, err error)
-	DeleteContainer(name string) (op Operation, err error)
-
-	ExecContainer(containerName string, exec api.ContainerExecPost, args *ContainerExecArgs) (op Operation, err error)
-	ConsoleContainer(containerName string, console api.ContainerConsolePost, args *ContainerConsoleArgs) (op Operation, err error)
-	GetContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) (content io.ReadCloser, err error)
-	DeleteContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) (err error)
-
-	GetContainerFile(containerName string, path string) (content io.ReadCloser, resp *ContainerFileResponse, err error)
-	CreateContainerFile(containerName string, path string, args ContainerFileArgs) (err error)
-	DeleteContainerFile(containerName string, path string) (err error)
-
-	GetContainerSnapshotNames(containerName string) (names []string, err error)
-	GetContainerSnapshots(containerName string) (snapshots []api.ContainerSnapshot, err error)
-	GetContainerSnapshot(containerName string, name string) (snapshot *api.ContainerSnapshot, ETag string, err error)
-	CreateContainerSnapshot(containerName string, snapshot api.ContainerSnapshotsPost) (op Operation, err error)
-	CopyContainerSnapshot(source InstanceServer, containerName string, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (op RemoteOperation, err error)
-	RenameContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op Operation, err error)
-	MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op Operation, err error)
-	DeleteContainerSnapshot(containerName string, name string) (op Operation, err error)
-	UpdateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPut, ETag string) (op Operation, err error)
-
-	GetContainerBackupNames(containerName string) (names []string, err error)
-	GetContainerBackups(containername string) (backups []api.ContainerBackup, err error)
-	GetContainerBackup(containerName string, name string) (backup *api.ContainerBackup, ETag string, err error)
-	CreateContainerBackup(containerName string, backup api.ContainerBackupsPost) (op Operation, err error)
-	RenameContainerBackup(containerName string, name string, backup api.ContainerBackupPost) (op Operation, err error)
-	DeleteContainerBackup(containerName string, name string) (op Operation, err error)
-	GetContainerBackupFile(containerName string, name string, req *BackupFileRequest) (resp *BackupFileResponse, err error)
-	CreateContainerFromBackup(args ContainerBackupArgs) (op Operation, err error)
-
-	GetContainerState(name string) (state *api.ContainerState, ETag string, err error)
-	UpdateContainerState(name string, state api.ContainerStatePut, ETag string) (op Operation, err error)
-
-	GetContainerLogfiles(name string) (logfiles []string, err error)
-	GetContainerLogfile(name string, filename string) (content io.ReadCloser, err error)
-	DeleteContainerLogfile(name string, filename string) (err error)
-
-	GetContainerMetadata(name string) (metadata *api.ImageMetadata, ETag string, err error)
-	SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) (err error)
-
-	GetContainerTemplateFiles(containerName string) (templates []string, err error)
-	GetContainerTemplateFile(containerName string, templateName string) (content io.ReadCloser, err error)
-	CreateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
-	UpdateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
-	DeleteContainerTemplateFile(name string, templateName string) (err error)
-
 	// Instance functions.
 	GetInstanceNames(instanceType api.InstanceType) (names []string, err error)
 	GetInstanceNamesAllProjects(instanceType api.InstanceType) (names map[string][]string, err error)
-	GetInstances(instanceType api.InstanceType) (instances []api.Instance, err error)
-	GetInstancesFull(instanceType api.InstanceType) (instances []api.InstanceFull, err error)
-	GetInstancesAllProjects(instanceType api.InstanceType) (instances []api.Instance, err error)
-	GetInstancesFullAllProjects(instanceType api.InstanceType) (instances []api.InstanceFull, err error)
-	GetInstancesWithFilter(instanceType api.InstanceType, filters []string) (instances []api.Instance, err error)
-	GetInstancesFullWithFilter(instanceType api.InstanceType, filters []string) (instances []api.InstanceFull, err error)
-	GetInstancesAllProjectsWithFilter(instanceType api.InstanceType, filters []string) (instances []api.Instance, err error)
-	GetInstancesFullAllProjectsWithFilter(instanceType api.InstanceType, filters []string) (instances []api.InstanceFull, err error)
+	GetInstances(args GetInstancesArgs) (instances []api.Instance, err error)
+	GetInstancesFull(args GetInstancesFullArgs) (instances []api.InstanceFull, err error)
 	GetInstance(name string) (instance *api.Instance, ETag string, err error)
 	GetInstanceFull(name string) (instance *api.InstanceFull, ETag string, err error)
 	CreateInstance(instance api.InstancesPost) (op Operation, err error)
@@ -180,7 +114,7 @@ type InstanceServer interface {
 	UpdateInstance(name string, instance api.InstancePut, ETag string) (op Operation, err error)
 	RenameInstance(name string, instance api.InstancePost) (op Operation, err error)
 	MigrateInstance(name string, instance api.InstancePost) (op Operation, err error)
-	DeleteInstance(name string) (op Operation, err error)
+	DeleteInstance(name string, force bool) (op Operation, err error)
 	UpdateInstances(state api.InstancesPut, ETag string) (op Operation, err error)
 	RebuildInstance(instanceName string, req api.InstanceRebuildPost) (op Operation, err error)
 	RebuildInstanceFromImage(source ImageServer, image api.Image, instanceName string, req api.InstanceRebuildPost) (op RemoteOperation, err error)
@@ -348,7 +282,7 @@ type InstanceServer interface {
 	CreateProject(project api.ProjectsPost) (err error)
 	UpdateProject(name string, project api.ProjectPut, ETag string) (err error)
 	RenameProject(name string, project api.ProjectPost) (op Operation, err error)
-	DeleteProject(name string, force bool) (err error)
+	DeleteProject(name string, force bool) (op Operation, err error)
 
 	// Storage pool functions ("storage" API extension)
 	GetStoragePoolNames() (names []string, err error)

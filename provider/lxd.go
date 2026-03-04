@@ -106,8 +106,8 @@ type InstanceServerInterface interface {
 	CreateInstance(instance api.InstancesPost) (lxd.Operation, error)
 	UpdateInstanceState(name string, state api.InstanceStatePut, ETag string) (lxd.Operation, error)
 	GetInstanceFull(name string) (*api.InstanceFull, string, error)
-	DeleteInstance(name string) (lxd.Operation, error)
-	GetInstancesFull(instanceType api.InstanceType) ([]api.InstanceFull, error)
+	DeleteInstance(name string, force bool) (lxd.Operation, error)
+	GetInstancesFull(args lxd.GetInstancesFullArgs) ([]api.InstanceFull, error)
 }
 
 type LXD struct {
@@ -177,9 +177,9 @@ func (l *LXD) getProfiles(ctx context.Context, flavor string) ([]string, error) 
 // sadly, the security.secureboot flag is a string encoded boolean.
 func (l *LXD) secureBootEnabled() string {
 	if l.cfg.SecureBoot {
-		return "true"
+		return "uefi-secureboot"
 	}
-	return "false"
+	return "uefi-nosecureboot"
 }
 
 func (l *LXD) getCreateInstanceArgs(ctx context.Context, bootstrapParams commonParams.BootstrapInstance, specs extraSpecs) (api.InstancesPost, error) {
@@ -228,7 +228,7 @@ func (l *LXD) getCreateInstanceArgs(ctx context.Context, bootstrapParams commonP
 	}
 
 	if instanceType == config.LXDImageVirtualMachine {
-		configMap["security.secureboot"] = l.secureBootEnabled()
+		configMap["boot.mode"] = l.secureBootEnabled()
 	}
 
 	args := api.InstancesPost{
@@ -346,7 +346,7 @@ func (l *LXD) DeleteInstance(ctx context.Context, instance string) error {
 	})
 	var op lxd.Operation
 	go func() {
-		op, err := cli.DeleteInstance(instance)
+		op, err := cli.DeleteInstance(instance, false)
 		opResponse <- struct {
 			op  lxd.Operation
 			err error
@@ -398,7 +398,7 @@ func (l *LXD) ListInstances(ctx context.Context, poolID string) ([]commonParams.
 		// external process will allow us to not care if a goroutine leaks. Once a timeout
 		// is reached, the provider can just exit with an error. Something we can't do with
 		// internal providers.
-		instances, err := cli.GetInstancesFull(api.InstanceTypeAny)
+		instances, err := cli.GetInstancesFull(lxd.GetInstancesFullArgs{InstanceType: api.InstanceTypeAny})
 		result <- listResponse{
 			instances: instances,
 			err:       err,

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 )
@@ -281,12 +282,12 @@ func TestGetCreateInstanceArgsVM(t *testing.T) {
 					Profiles:     []string{"default", "virtual-machine"},
 					Description:  "Github runner provisioned by garm",
 					Config: map[string]string{
-						"user.user-data":      "#ps1_sysnative\n" + "#cloud-config",
-						osTypeKeyName:         "windows",
-						osArchKeyNAme:         "amd64",
-						controllerIDKeyName:   "controller",
-						poolIDKey:             "default",
-						"security.secureboot": "false",
+						"user.user-data":    "#ps1_sysnative\n" + "#cloud-config",
+						osTypeKeyName:       "windows",
+						osArchKeyNAme:       "amd64",
+						controllerIDKeyName: "controller",
+						poolIDKey:           "default",
+						"boot.mode":         "uefi-nosecureboot",
 					},
 				},
 				Source: api.InstanceSource{
@@ -567,7 +568,7 @@ func TestDeleteInstance(t *testing.T) {
 	}
 	mockOp := new(MockOperation)
 	mockOp.On("WaitContext", mock.Anything).Return(nil)
-	cli.On("DeleteInstance", instanceName).Return(mockOp, nil)
+	cli.On("DeleteInstance", instanceName, false).Return(mockOp, nil)
 	cli.On("UpdateInstanceState", "test-instance", "", api.InstanceStatePut{
 		Action:  "stop",
 		Timeout: -1,
@@ -604,7 +605,7 @@ func TestListInstances(t *testing.T) {
 	DefaultGetCloudconfig = func(_ commonParams.BootstrapInstance, _ commonParams.RunnerApplicationDownload, _ string) (string, error) {
 		return "#cloud-config", nil
 	}
-	cli.On("GetInstancesFull", api.InstanceTypeAny).Return([]api.InstanceFull{
+	cli.On("GetInstancesFull", lxd.GetInstancesFullArgs{InstanceType: api.InstanceTypeAny}).Return([]api.InstanceFull{
 		{
 			Instance: api.Instance{
 				Name:         "test-instance",
@@ -666,7 +667,7 @@ func TestRemoveAllInstances(t *testing.T) {
 		imageManager: &image{},
 		controllerID: "controller",
 	}
-	cli.On("GetInstancesFull", api.InstanceTypeAny).Return([]api.InstanceFull{
+	cli.On("GetInstancesFull", lxd.GetInstancesFullArgs{InstanceType: api.InstanceTypeAny}).Return([]api.InstanceFull{
 		{
 			Instance: api.Instance{
 				Name:         instanceName,
@@ -686,7 +687,7 @@ func TestRemoveAllInstances(t *testing.T) {
 	}, nil)
 	mockOp := new(MockOperation)
 	mockOp.On("WaitContext", mock.Anything).Return(nil)
-	cli.On("DeleteInstance", instanceName).Return(mockOp, nil)
+	cli.On("DeleteInstance", instanceName, false).Return(mockOp, nil)
 	cli.On("UpdateInstanceState", "test-instance", "", api.InstanceStatePut{
 		Action:  "stop",
 		Timeout: -1,
