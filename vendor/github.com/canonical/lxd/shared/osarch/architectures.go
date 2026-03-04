@@ -3,6 +3,7 @@ package osarch
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 const (
@@ -44,7 +45,7 @@ var architectureNames = map[int]string{
 
 var architectureAliases = map[int][]string{
 	ARCH_32BIT_INTEL_X86:             {"i386", "i586", "386", "x86", "generic_32"},
-	ARCH_64BIT_INTEL_X86:             {"amd64", "generic_64"},
+	ARCH_64BIT_INTEL_X86:             {"amd64", "amd64v3", "generic_64"},
 	ARCH_32BIT_ARMV6_LITTLE_ENDIAN:   {"armel", "arm"},
 	ARCH_32BIT_ARMV7_LITTLE_ENDIAN:   {"armhf", "armhfp", "armv7a_hardfp", "armv7", "armv7a_vfpv3_hardfp"},
 	ARCH_32BIT_ARMV8_LITTLE_ENDIAN:   {},
@@ -111,6 +112,12 @@ func ArchitectureName(arch int) (string, error) {
 
 // ArchitectureId returns the architecture ID for a given architecture name or alias.
 func ArchitectureId(arch string) (int, error) { //nolint:revive
+	// Handle duplicate architectures from broken metadata (e.g. "x86_64 x86_64")
+	archFields := strings.Fields(arch)
+	if len(archFields) > 0 {
+		arch = archFields[0]
+	}
+
 	for id, name := range architectureNames {
 		if name == arch {
 			return id, nil

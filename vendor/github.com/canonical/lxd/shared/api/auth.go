@@ -5,6 +5,11 @@ import (
 )
 
 const (
+	// AuthGroupAdminsName is the name of the admins group.
+	AuthGroupAdminsName = "admins"
+)
+
+const (
 	// AuthenticationMethodTLS is the default authentication method for interacting with LXD remotely.
 	AuthenticationMethodTLS = "tls"
 
@@ -42,6 +47,12 @@ const (
 
 	// IdentityTypeBearerTokenDevLXD represents an identity that bears a LXD token that can be used to interact with the DevLXD API.
 	IdentityTypeBearerTokenDevLXD = "DevLXD token bearer"
+
+	// IdentityTypeBearerTokenClient represents an identity that bears a LXD token that can be used to interact with the LXD API.
+	IdentityTypeBearerTokenClient = "Client token bearer"
+
+	// IdentityTypeBearerTokenInitialUI is the identity type used for initial connection to LXD via the UI when conventional authentication is not yet configured.
+	IdentityTypeBearerTokenInitialUI = "Initial UI token bearer"
 )
 
 // WithEntitlements is meant to be an embedded struct to API types eligible for entitlement enrichment,
@@ -132,6 +143,10 @@ type IdentityInfo struct {
 	// FineGrained is a boolean indicating whether the identity is fine-grained,
 	// meaning that permissions are managed via group membership.
 	FineGrained bool `json:"fine_grained" yaml:"fine_grained"`
+
+	// ExpiresAt is the expiration time of the credential used to authenticate the caller.
+	// It is set only when client is trusted, and authentication method is either bearer or TLS.
+	ExpiresAt *time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 }
 
 // IdentityPut contains the editable fields of an IdentityInfo.

@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -942,32 +941,6 @@ func TextEditor(inPath string, inContent []byte) ([]byte, error) {
 	return content, nil
 }
 
-// ParseMetadata converts the provided metadata into a map[string]any. An error is
-// returned if the input is not a valid map or if the keys are not strings.
-func ParseMetadata(metadata any) (map[string]any, error) {
-	newMetadata := make(map[string]any)
-	s := reflect.ValueOf(metadata)
-	if !s.IsValid() {
-		return nil, nil
-	}
-
-	if s.Kind() == reflect.Map {
-		for _, k := range s.MapKeys() {
-			if k.Kind() != reflect.String {
-				return nil, errors.New("Invalid metadata provided (key isn't a string)")
-			}
-
-			newMetadata[k.String()] = s.MapIndex(k).Interface()
-		}
-	} else if s.Kind() == reflect.Ptr && !s.Elem().IsValid() {
-		return nil, nil
-	} else {
-		return nil, errors.New("Invalid metadata provided (type isn't a map)")
-	}
-
-	return newMetadata, nil
-}
-
 // RemoveDuplicatesFromString removes all duplicates of the string 'sep'
 // from the specified string 's'. Leading and trailing occurrences of sep
 // are NOT removed (duplicate leading/trailing are). Performs poorly if
@@ -1190,38 +1163,6 @@ func EscapePathFstab(path string) string {
 		"\n", "\\012",
 		"\\", "\\\\")
 	return r.Replace(path)
-}
-
-// SetProgressMetadata updates the provided metadata map with progress information, including
-// the percentage complete, data processed, and speed. It formats and stores these values for
-// both API callers and CLI display purposes.
-func SetProgressMetadata(metadata map[string]any, stage, displayPrefix string, percent, processed, speed int64) {
-	progress := make(map[string]string)
-	// stage, percent, speed sent for API callers.
-	progress["stage"] = stage
-	if processed > 0 {
-		progress["processed"] = strconv.FormatInt(processed, 10)
-	}
-
-	if percent > 0 {
-		progress["percent"] = strconv.FormatInt(percent, 10)
-	}
-
-	progress["speed"] = strconv.FormatInt(speed, 10)
-	metadata["progress"] = progress
-
-	// <stage>_progress with formatted text sent for lxc cli.
-	if percent > 0 {
-		if speed > 0 {
-			metadata[stage+"_progress"] = fmt.Sprintf("%s: %d%% (%s/s)", displayPrefix, percent, units.GetByteSizeString(speed, 2))
-		} else {
-			metadata[stage+"_progress"] = fmt.Sprintf("%s: %d%%", displayPrefix, percent)
-		}
-	} else if processed > 0 {
-		metadata[stage+"_progress"] = displayPrefix + ": " + units.GetByteSizeString(processed, 2) + " (" + units.GetByteSizeString(speed, 2) + "/s)"
-	} else {
-		metadata[stage+"_progress"] = displayPrefix + ": " + units.GetByteSizeString(speed, 2) + "/s"
-	}
 }
 
 // DownloadFileHash downloads a file from the specified URL and writes it to the target,
@@ -1561,4 +1502,16 @@ func IsMicroOVNUsed() bool {
 	}
 
 	return false
+}
+
+// ShellQuote escapes the input string for use in shell command arguments.
+// It is equivalent to strconv.Quote but using a single-quote instead.
+func ShellQuote(in string) string {
+	in = strconv.Quote(in)
+	in = in[1 : len(in)-1]                    // Remove the surrounding double quotes added by strconv.Quote.
+	in = strings.ReplaceAll(in, "\\\"", "\"") // Unescape any escaped double quotes from strconv.Quote.
+
+	// Replace ' with '\'' which translates to:
+	// [End literal string] + [Escaped single quote] + [Start new literal string]
+	return `'` + strings.ReplaceAll(in, `'`, `'\''`) + `'`
 }
