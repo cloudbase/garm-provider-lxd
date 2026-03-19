@@ -88,7 +88,6 @@ var APIExtensions = []string{
 	"restrict_devlxd",
 	"migration_pre_copy",
 	"infiniband",
-	"maas_network",
 	"devlxd_events",
 	"proxy",
 	"network_dhcp_gateway",
@@ -341,7 +340,6 @@ var APIExtensions = []string{
 	"storage_buckets_create_credentials",
 	"metrics_cpu_effective_total",
 	"projects_networks_restricted_access",
-	"storage_buckets_local",
 	"loki",
 	"acme",
 	"internal_metrics",
@@ -479,6 +477,10 @@ var APIExtensions = []string{
 	"project_delete_operation",
 	"gpu_cdi_amd",
 	"instance_refresh_config",
+	"clustering_control_plane",
+	"storage_remote_drop_source",
+	"storage_ceph_use_rbd_defaults",
+	"bulk_operations",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

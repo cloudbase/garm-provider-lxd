@@ -134,7 +134,7 @@ func (r *ProtocolLXD) GetImageSecret(fingerprint string) (string, error) {
 
 	secret, ok := opAPI.Metadata["secret"].(string)
 	if !ok {
-		return "", errors.New("Failed to extract image secret from operation metadata")
+		return "", errors.New("Failed extracting image secret from operation metadata")
 	}
 
 	return secret, nil
@@ -184,12 +184,11 @@ func (r *ProtocolLXD) GetPrivateImageFile(fingerprint string, secret string, req
 	}
 
 	// Attempt to download from host
-	if secret == "" && shared.PathExists("/dev/lxd/sock") && os.Geteuid() == 0 {
-		unixURI := "http://unix.socket" + uri
-
+	if secret == "" && os.Geteuid() == 0 {
 		// Setup the HTTP client
 		devlxdHTTP, err := unixHTTPClient(nil, "/dev/lxd/sock", nil)
 		if err == nil {
+			unixURI := "http://unix.socket" + uri
 			resp, err := lxdDownloadImage(fingerprint, unixURI, r.httpUserAgent, devlxdHTTP.Do, req)
 			if err == nil {
 				return resp, nil
@@ -325,7 +324,7 @@ func lxdDownloadImage(fingerprint string, uri string, userAgent string, do func(
 		// Check the hash
 		hash := hex.EncodeToString(sha256.Sum(nil))
 		if !strings.HasPrefix(hash, fingerprint) {
-			return nil, fmt.Errorf("Image fingerprint doesn't match. Got %s expected %s", hash, fingerprint)
+			return nil, fmt.Errorf("Image fingerprint does not match. Got %s expected %s", hash, fingerprint)
 		}
 
 		return &resp, nil
@@ -353,7 +352,7 @@ func lxdDownloadImage(fingerprint string, uri string, userAgent string, do func(
 	// Check the hash
 	hash := hex.EncodeToString(sha256.Sum(nil))
 	if !strings.HasPrefix(hash, fingerprint) {
-		return nil, fmt.Errorf("Image fingerprint doesn't match. Got %s expected %s", hash, fingerprint)
+		return nil, fmt.Errorf("Image fingerprint does not match. Got %s expected %s", hash, fingerprint)
 	}
 
 	return &resp, nil
@@ -412,7 +411,7 @@ func (r *ProtocolLXD) GetImageAliasType(imageType string, name string) (*api.Ima
 		}
 
 		if alias.Type != imageType {
-			return nil, "", errors.New("Alias doesn't exist for the specified type")
+			return nil, "", errors.New("Alias does not exist for the specified type")
 		}
 	}
 
@@ -621,7 +620,7 @@ func (r *ProtocolLXD) CreateImage(image api.ImagesPost, args *ImageCreateArgs) (
 // tryCopyImage iterates through the source server URLs until one lets it download the image.
 func (r *ProtocolLXD) tryCopyImage(req api.ImagesPost, urls []string) (RemoteOperation, error) {
 	if len(urls) == 0 {
-		return nil, errors.New("The source server isn't listening on the network")
+		return nil, errors.New("The source server is not listening on the network")
 	}
 
 	rop := remoteOperation{
@@ -647,14 +646,14 @@ func (r *ProtocolLXD) tryCopyImage(req api.ImagesPost, urls []string) (RemoteOpe
 			op, err := rop.GetTarget()
 			if err != nil {
 				errors = append(errors, remoteOperationResult{Error: err})
-				rop.err = remoteOperationError("Failed to get operation data", errors)
+				rop.err = remoteOperationError("Failed getting operation data", errors)
 				return
 			}
 
 			// Extract the fingerprint
 			fingerprint, ok := op.Metadata["fingerprint"].(string)
 			if !ok {
-				rop.err = remoteOperationError("Failed to extract fingerprint from operation metadata", errors)
+				rop.err = remoteOperationError("Failed extracting fingerprint from operation metadata", errors)
 				return
 			}
 
@@ -667,7 +666,7 @@ func (r *ProtocolLXD) tryCopyImage(req api.ImagesPost, urls []string) (RemoteOpe
 				err := r.CreateImageAlias(alias)
 				if err != nil {
 					errors = append(errors, remoteOperationResult{Error: err})
-					rop.err = remoteOperationError("Failed to create image alias", errors)
+					rop.err = remoteOperationError("Failed creating image alias", errors)
 					return
 				}
 			}
@@ -884,7 +883,7 @@ func (r *ProtocolLXD) CopyImage(source ImageServer, image api.Image, args *Image
 
 			op, err := r.CreateImage(imagePost, createArgs)
 			if err != nil {
-				rop.err = remoteOperationError("Failed to copy image", nil)
+				rop.err = remoteOperationError("Failed copying image", nil)
 				return
 			}
 
@@ -898,7 +897,7 @@ func (r *ProtocolLXD) CopyImage(source ImageServer, image api.Image, args *Image
 
 			err = rop.targetOp.Wait()
 			if err != nil {
-				rop.err = remoteOperationError("Failed to copy image", nil)
+				rop.err = remoteOperationError("Failed copying image", nil)
 				return
 			}
 		}()
