@@ -23,7 +23,6 @@ import (
 	"github.com/canonical/lxd/shared/cancel"
 	"github.com/canonical/lxd/shared/ioprogress"
 	"github.com/canonical/lxd/shared/tcp"
-	"github.com/canonical/lxd/shared/units"
 	"github.com/canonical/lxd/shared/ws"
 )
 
@@ -843,14 +842,9 @@ func (r *ProtocolLXD) CopyInstance(source InstanceServer, instance api.Instance,
 
 		opAPI := op.Get()
 
-		targetSecrets := map[string]string{}
-		for k, v := range opAPI.Metadata {
-			vStr, ok := v.(string)
-			if !ok {
-				continue
-			}
-
-			targetSecrets[k] = vStr
+		targetSecrets, err := opAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Prepare the source request
@@ -876,14 +870,9 @@ func (r *ProtocolLXD) CopyInstance(source InstanceServer, instance api.Instance,
 
 	opAPI := op.Get()
 
-	sourceSecrets := map[string]string{}
-	for k, v := range opAPI.Metadata {
-		vStr, ok := v.(string)
-		if !ok {
-			continue
-		}
-
-		sourceSecrets[k] = vStr
+	sourceSecrets, err := opAPI.WebsocketSecrets()
+	if err != nil {
+		return nil, err
 	}
 
 	// Relay mode migration
@@ -901,14 +890,9 @@ func (r *ProtocolLXD) CopyInstance(source InstanceServer, instance api.Instance,
 		targetOpAPI := targetOp.Get()
 
 		// Extract the websockets
-		targetSecrets := map[string]string{}
-		for k, v := range targetOpAPI.Metadata {
-			vStr, ok := v.(string)
-			if !ok {
-				continue
-			}
-
-			targetSecrets[k] = vStr
+		targetSecrets, err := targetOpAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Launch the relay
@@ -1961,14 +1945,9 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 
 		opAPI := op.Get()
 
-		targetSecrets := map[string]string{}
-		for k, v := range opAPI.Metadata {
-			vStr, ok := v.(string)
-			if !ok {
-				continue
-			}
-
-			targetSecrets[k] = vStr
+		targetSecrets, err := opAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Prepare the source request
@@ -1994,14 +1973,9 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 
 	opAPI := op.Get()
 
-	sourceSecrets := map[string]string{}
-	for k, v := range opAPI.Metadata {
-		vStr, ok := v.(string)
-		if !ok {
-			continue
-		}
-
-		sourceSecrets[k] = vStr
+	sourceSecrets, err := opAPI.WebsocketSecrets()
+	if err != nil {
+		return nil, err
 	}
 
 	// Relay mode migration
@@ -2019,14 +1993,9 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 		targetOpAPI := targetOp.Get()
 
 		// Extract the websockets
-		targetSecrets := map[string]string{}
-		for k, v := range targetOpAPI.Metadata {
-			vStr, ok := v.(string)
-			if !ok {
-				continue
-			}
-
-			targetSecrets[k] = vStr
+		targetSecrets, err := targetOpAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Launch the relay
@@ -2990,19 +2959,7 @@ func (r *ProtocolLXD) GetInstanceBackupFile(instanceName string, name string, re
 	}
 
 	// Handle the data
-	body := response.Body
-	if req.ProgressHandler != nil {
-		body = &ioprogress.ProgressReader{
-			ReadCloser: response.Body,
-			Tracker: &ioprogress.ProgressTracker{
-				Length: response.ContentLength,
-				Handler: func(percent int64, speed int64) {
-					req.ProgressHandler(ioprogress.ProgressData{Text: strconv.FormatInt(percent, 10) + "% (" + units.GetByteSizeString(speed, 2) + "/s)"})
-				},
-			},
-		}
-	}
-
+	body := ioprogress.NewProgressReader(response.Body, ioprogress.WithLength(response.ContentLength), ioprogress.WithProgressHandler(req.ProgressHandler))
 	size, err := io.Copy(req.BackupFile, body)
 	if err != nil {
 		return nil, err

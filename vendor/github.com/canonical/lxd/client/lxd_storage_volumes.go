@@ -6,13 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/cancel"
 	"github.com/canonical/lxd/shared/ioprogress"
-	"github.com/canonical/lxd/shared/units"
 )
 
 // Storage volumes handling function
@@ -681,12 +679,9 @@ func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source InstanceServer, 
 
 		opAPI := op.Get()
 
-		targetSecrets := map[string]string{}
-		for k, v := range opAPI.Metadata {
-			value, ok := v.(string)
-			if ok {
-				targetSecrets[k] = value
-			}
+		targetSecrets, err := opAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Prepare the source request
@@ -714,12 +709,9 @@ func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source InstanceServer, 
 	opAPI := op.Get()
 
 	// Prepare source server secrets for remote
-	sourceSecrets := map[string]string{}
-	for k, v := range opAPI.Metadata {
-		value, ok := v.(string)
-		if ok {
-			sourceSecrets[k] = value
-		}
+	sourceSecrets, err := opAPI.WebsocketSecrets()
+	if err != nil {
+		return nil, err
 	}
 
 	// Relay mode migration
@@ -740,12 +732,9 @@ func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source InstanceServer, 
 		targetOpAPI := targetOp.Get()
 
 		// Extract the websockets
-		targetSecrets := map[string]string{}
-		for k, v := range targetOpAPI.Metadata {
-			value, ok := v.(string)
-			if ok {
-				targetSecrets[k] = value
-			}
+		targetSecrets, err := targetOpAPI.WebsocketSecrets()
+		if err != nil {
+			return nil, err
 		}
 
 		// Launch the relay
@@ -1056,19 +1045,7 @@ func (r *ProtocolLXD) GetStoragePoolVolumeBackupFile(pool string, volName string
 	}
 
 	// Handle the data
-	body := response.Body
-	if req.ProgressHandler != nil {
-		body = &ioprogress.ProgressReader{
-			ReadCloser: response.Body,
-			Tracker: &ioprogress.ProgressTracker{
-				Length: response.ContentLength,
-				Handler: func(percent int64, speed int64) {
-					req.ProgressHandler(ioprogress.ProgressData{Text: strconv.FormatInt(percent, 10) + "% (" + units.GetByteSizeString(speed, 2) + "/s)"})
-				},
-			},
-		}
-	}
-
+	body := ioprogress.NewProgressReader(response.Body, ioprogress.WithLength(response.ContentLength), ioprogress.WithProgressHandler(req.ProgressHandler))
 	size, err := io.Copy(req.BackupFile, body)
 	if err != nil {
 		return nil, err

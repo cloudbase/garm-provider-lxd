@@ -481,6 +481,13 @@ var APIExtensions = []string{
 	"storage_remote_drop_source",
 	"storage_ceph_use_rbd_defaults",
 	"bulk_operations",
+	"ovn_dynamic_northbound_connection",
+	"storage_zfs_promote",
+	"storage_and_network_operations",
+	"gpu_cdi_hotplug",
+	"image_extended_metadata",
+	"cluster_links",
+	"replicators",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

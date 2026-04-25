@@ -15,6 +15,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,7 +35,6 @@ import (
 	"github.com/canonical/lxd/shared/cancel"
 	"github.com/canonical/lxd/shared/ioprogress"
 	"github.com/canonical/lxd/shared/revert"
-	"github.com/canonical/lxd/shared/units"
 )
 
 // SnapshotDelimiter is the character used to delimit instance and snapshot names.
@@ -956,6 +956,35 @@ func RemoveDuplicatesFromString(s string, sep string) string {
 	return s
 }
 
+// EnsurePort adds the provided port to the given address unless it already has
+// a non-zero port number.
+func EnsurePort(addr string, defaultPort string) string {
+	// Check for IP address to properly handle IPv6 addresses.
+	if net.ParseIP(addr) != nil {
+		// For valid IP address just add port number.
+		return net.JoinHostPort(addr, defaultPort)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err == nil {
+		if port == "" || port == "0" {
+			port = defaultPort
+		}
+
+		// Rejoin host and port to ensure addresses are formatted uniformly.
+		return net.JoinHostPort(host, port)
+	}
+
+	// Attempt to naively add port to handle partially formatted IPv6 addresses.
+	host, port, err = net.SplitHostPort(fmt.Sprintf("%s:%s", addr, defaultPort))
+	if err == nil {
+		// Rejoin host and port to ensure addresses are formatted uniformly.
+		return net.JoinHostPort(host, port)
+	}
+
+	return net.JoinHostPort(addr, defaultPort)
+}
+
 // RunError is the error from the RunCommand family of functions.
 type RunError struct {
 	cmd    string
@@ -1202,22 +1231,7 @@ func DownloadFileHash(ctx context.Context, httpClient *http.Client, useragent st
 	}
 
 	// Handle the data
-	body := r.Body
-	if progress != nil {
-		body = &ioprogress.ProgressReader{
-			ReadCloser: r.Body,
-			Tracker: &ioprogress.ProgressTracker{
-				Length: r.ContentLength,
-				Handler: func(percent int64, speed int64) {
-					if filename != "" {
-						progress(ioprogress.ProgressData{Text: fmt.Sprintf("%s: %d%% (%s/s)", filename, percent, units.GetByteSizeString(speed, 2))})
-					} else {
-						progress(ioprogress.ProgressData{Text: fmt.Sprintf("%d%% (%s/s)", percent, units.GetByteSizeString(speed, 2))})
-					}
-				},
-			},
-		}
-	}
+	body := ioprogress.NewProgressReader(r.Body, ioprogress.WithLength(r.ContentLength), ioprogress.WithDescriptiveProgressHandler(filename, progress))
 
 	var size int64
 
@@ -1287,6 +1301,10 @@ func (r *ReadSeeker) Seek(offset int64, whence int) (int64, error) {
 	return r.Seeker.Seek(offset, whence)
 }
 
+// bannedTemplateTags is the list of pongo2 tags that are banned from use in templates
+// to prevent filesystem access from the host.
+var bannedTemplateTags = []string{"extends", "import", "include", "ssi"}
+
 // RenderTemplate renders a pongo2 template.
 func RenderTemplate(template string, ctx pongo2.Context) (output string, err error) {
 	defer func() {
@@ -1302,7 +1320,7 @@ func RenderTemplate(template string, ctx pongo2.Context) (output string, err err
 	set := pongo2.NewSet("restricted", pongo2.DefaultLoader)
 
 	// Ban tags that could be used to access the host's filesystem.
-	for _, tag := range []string{"extends", "import", "include", "ssi"} {
+	for _, tag := range bannedTemplateTags {
 		err := set.BanTag(tag)
 		if err != nil {
 			return "", fmt.Errorf("Failed banning tag %q: %w", tag, err)
@@ -1334,6 +1352,39 @@ func RenderTemplate(template string, ctx pongo2.Context) (output string, err err
 	}
 
 	return "", errors.New("Recursion limit reached while rendering template")
+}
+
+// RenderTemplateFile renders a pongo2 template to a writer.
+// No nesting is supported in this scenario.
+func RenderTemplateFile(w io.Writer, template string, ctx pongo2.Context) (err error) {
+	defer func() {
+		// Capture panics in the pongo2 template rendering.
+		// This is to prevent the server from crashing due to a template error.
+		r := recover()
+		if r != nil {
+			err = fmt.Errorf("Panic while rendering template: %v", r)
+		}
+	}()
+
+	// Create custom TemplateSet.
+	set := pongo2.NewSet("restricted", pongo2.DefaultLoader)
+
+	// Ban tags that could be used to access the host's filesystem.
+	for _, tag := range bannedTemplateTags {
+		err := set.BanTag(tag)
+		if err != nil {
+			return fmt.Errorf("Failed banning tag %q: %w", tag, err)
+		}
+	}
+
+	// Load template from string.
+	tpl, err := set.FromString("{% autoescape off %}" + template + "{% endautoescape %}")
+	if err != nil {
+		return err
+	}
+
+	// Render the template to the writer.
+	return tpl.ExecuteWriter(ctx, w)
 }
 
 // GetExpiry returns the expiry date based on the reference date and a length of time.
