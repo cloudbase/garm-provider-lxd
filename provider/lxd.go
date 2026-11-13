@@ -47,15 +47,21 @@ const (
 
 var (
 	configToLXDArchMap map[commonParams.OSArch]string = map[commonParams.OSArch]string{
-		commonParams.Amd64: "x86_64",
-		commonParams.Arm64: "aarch64",
-		commonParams.Arm:   "armv7l",
+		commonParams.Amd64:   "x86_64",
+		commonParams.Arm64:   "aarch64",
+		commonParams.Arm:     "armv7l",
+		commonParams.Ppc64le: "ppc64le",
+		commonParams.S390x:   "s390x",
+		commonParams.Riscv64: "riscv64",
 	}
 
 	lxdToConfigArch map[string]commonParams.OSArch = map[string]commonParams.OSArch{
 		"x86_64":  commonParams.Amd64,
 		"aarch64": commonParams.Arm64,
 		"armv7l":  commonParams.Arm,
+		"ppc64le": commonParams.Ppc64le,
+		"s390x":   commonParams.S390x,
+		"riscv64": commonParams.Riscv64,
 	}
 )
 
