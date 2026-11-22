@@ -204,9 +204,13 @@ func (l *LXD) waitInstanceHasIP(ctx context.Context, instanceName string) (commo
 			}
 			return errIPNotFound
 		},
-		Attempts: 20,
-		Delay:    5 * time.Second,
-		Clock:    clock.WallClock,
+		// The IP usually shows up within a second or two of the start, so poll
+		// early and back off to keep a remote LXD from being hammered.
+		Delay:       500 * time.Millisecond,
+		BackoffFunc: retry.DoubleDelay,
+		MaxDelay:    5 * time.Second,
+		MaxDuration: 100 * time.Second,
+		Clock:       clock.WallClock,
 	})
 
 	if err != nil && err != errIPNotFound {
