@@ -302,7 +302,7 @@ func (l *LXD) CreateInstance(ctx context.Context, bootstrapParams commonParams.B
 		return commonParams.ProviderInstance{}, errors.Wrap(err, "creating instance")
 	}
 
-	ret, err := l.waitInstanceHasIP(ctx, args.Name)
+	ret, err := l.GetInstance(ctx, args.Name)
 	if err != nil {
 		return commonParams.ProviderInstance{}, errors.Wrap(err, "fetching instance")
 	}
