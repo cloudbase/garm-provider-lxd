@@ -9,11 +9,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 
@@ -23,8 +21,6 @@ import (
 	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/invopop/jsonschema"
-	"github.com/juju/clock"
-	"github.com/juju/retry"
 	"github.com/pkg/errors"
 )
 
@@ -178,42 +174,6 @@ func resolveArchitecture(osArch commonParams.OSArch) (string, error) {
 		return "", fmt.Errorf("architecture %s is not supported", osArch)
 	}
 	return arch, nil
-}
-
-// waitDeviceActive is a function capable of figuring out when a Equinix Metal
-// device is active
-func (l *LXD) waitInstanceHasIP(ctx context.Context, instanceName string) (commonParams.ProviderInstance, error) {
-	var p commonParams.ProviderInstance
-	errIPNotFound := fmt.Errorf("ip not found")
-	err := retry.Call(retry.CallArgs{
-		Func: func() error {
-			var err error
-			p, err = l.GetInstance(ctx, instanceName)
-			if err != nil {
-				return errors.Wrap(err, "fetching instance")
-			}
-			for _, addr := range p.Addresses {
-				ip := net.ParseIP(addr.Address)
-				if ip == nil {
-					continue
-				}
-				if ip.To4() == nil {
-					continue
-				}
-				return nil
-			}
-			return errIPNotFound
-		},
-		Attempts: 20,
-		Delay:    5 * time.Second,
-		Clock:    clock.WallClock,
-	})
-
-	if err != nil && err != errIPNotFound {
-		return commonParams.ProviderInstance{}, err
-	}
-
-	return p, nil
 }
 
 func ptr[T any](v T) *T {
