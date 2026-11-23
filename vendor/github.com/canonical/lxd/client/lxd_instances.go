@@ -2,6 +2,7 @@ package lxd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,11 +18,13 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/cancel"
 	"github.com/canonical/lxd/shared/ioprogress"
+	"github.com/canonical/lxd/shared/revert"
 	"github.com/canonical/lxd/shared/tcp"
 	"github.com/canonical/lxd/shared/ws"
 )
@@ -189,7 +192,7 @@ func (r *ProtocolLXD) tryRebuildInstance(instanceName string, req api.InstanceRe
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
 			if operation == "" {
-				req.Source.Server = serverURL
+				req.Source.Server = serverURL //nolint:staticcheck
 			} else {
 				req.Source.Operation = serverURL + "/1.0/operations/" + url.PathEscape(operation)
 			}
@@ -577,6 +580,13 @@ func (r *ProtocolLXD) CreateInstanceFromBackup(args InstanceBackupArgs) (Operati
 
 // CreateInstance requests that LXD creates a new instance.
 func (r *ProtocolLXD) CreateInstance(instance api.InstancesPost) (Operation, error) {
+	if instance.Type == api.InstanceTypeMicroVM {
+		err := r.CheckExtension("instance_microvm")
+		if err != nil {
+			return nil, fmt.Errorf("Server does not support MicroVM instances: %w", err)
+		}
+	}
+
 	path, _, err := r.instanceTypeToPath(instance.Type)
 	if err != nil {
 		return nil, err
@@ -586,6 +596,13 @@ func (r *ProtocolLXD) CreateInstance(instance api.InstancesPost) (Operation, err
 	instanceOnly := instance.Source.InstanceOnly || instance.Source.ContainerOnly //nolint:staticcheck,unused
 	if instanceOnly {
 		err := r.CheckExtension("container_only_migration")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if instance.Source.DiskVolumesMode == api.DiskVolumesModeAllExclusive {
+		err := r.CheckExtension("replicator_custom_volumes")
 		if err != nil {
 			return nil, err
 		}
@@ -615,7 +632,7 @@ func (r *ProtocolLXD) tryCreateInstance(req api.InstancesPost, urls []string, op
 		var errors []remoteOperationResult
 		for _, serverURL := range urls {
 			if operation == "" {
-				req.Source.Server = serverURL
+				req.Source.Server = serverURL //nolint:staticcheck
 			} else {
 				req.Source.Operation = serverURL + "/1.0/operations/" + url.PathEscape(operation)
 			}
@@ -921,7 +938,7 @@ func (r *ProtocolLXD) CopyInstance(source InstanceServer, instance api.Instance,
 	req.Source.Mode = "pull"
 	req.Source.Operation = opAPI.ID
 	req.Source.Websockets = sourceSecrets
-	req.Source.Certificate = info.Certificate
+	req.Source.Certificate = info.Certificate //nolint:staticcheck
 
 	return r.tryCreateInstance(req, info.Addresses, op)
 }
@@ -1054,6 +1071,13 @@ func (r *ProtocolLXD) MigrateInstance(name string, instance api.InstancePost) (O
 
 	if instance.AllowInconsistent {
 		err := r.CheckExtension("cluster_migration_inconsistent_copy")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if instance.DiskVolumesMode == api.DiskVolumesModeAllExclusive {
+		err := r.CheckExtension("replicator_custom_volumes")
 		if err != nil {
 			return nil, err
 		}
@@ -1278,7 +1302,7 @@ func (r *ProtocolLXD) ExecInstance(instanceName string, exec api.InstanceExecPos
 			// And attach stdin and stdout to it
 			go func() {
 				ws.MirrorRead(conn, args.Stdin)
-				<-ws.MirrorWrite(conn, args.Stdout)
+				<-ws.MirrorWrite(conn, args.Stdout) //nolint:errcheck
 				_ = conn.Close()
 
 				if args.DataDone != nil {
@@ -1292,74 +1316,96 @@ func (r *ProtocolLXD) ExecInstance(instanceName string, exec api.InstanceExecPos
 		}
 	} else {
 		// Handle non-interactive sessions
-		dones := make(map[int]chan error)
-		conns := []*websocket.Conn{}
-
-		// Handle stdin
-		if fds["0"] != "" {
-			conn, err := r.GetOperationWebsocket(opAPI.ID, fds["0"])
-			if err != nil {
-				return nil, err
-			}
-
-			go func() {
-				_, _, _ = conn.ReadMessage() // Consume pings from server.
-			}()
-
-			conns = append(conns, conn)
-			dones[0] = ws.MirrorRead(conn, args.Stdin)
+		type connResult struct {
+			id   int
+			conn *websocket.Conn
 		}
 
+		connsChan := make(chan connResult, 3) // Buffer for up to 3 connections (stdin, stdout, stderr)
+		var eg errgroup.Group
+
+		// Handle stdin, stdout, stderr connection concurrently.
+		for _, id := range []int{0, 1, 2} {
+			secret := fds[strconv.FormatInt(int64(id), 10)]
+			if secret == "" {
+				continue
+			}
+
+			eg.Go(func() error {
+				conn, err := r.GetOperationWebsocket(opAPI.ID, secret)
+				if err != nil {
+					return fmt.Errorf("Failed connecting channel %d: %w", id, err)
+				}
+
+				connsChan <- connResult{id: id, conn: conn}
+				return nil
+			})
+		}
+
+		// Wait for all websocket connections to be established, capturing first error (if any).
+		err = eg.Wait()
+		close(connsChan)
+		if err != nil {
+			// Close any connections that were successfully established before the error occurred.
+			for result := range connsChan {
+				if result.conn != nil {
+					_ = result.conn.Close()
+				}
+			}
+
+			return nil, err
+		}
+
+		dones := make(map[int]chan error)
+		conns := make(map[int]*websocket.Conn)
 		waitConns := 0 // Used for keeping track of when stdout and stderr have finished.
 
-		// Handle stdout
-		if fds["1"] != "" {
-			conn, err := r.GetOperationWebsocket(opAPI.ID, fds["1"])
-			if err != nil {
-				return nil, err
+		// Set up connection handlers.
+		for result := range connsChan {
+			id := result.id
+			conn := result.conn
+			conns[id] = conn
+
+			switch id {
+			case 0: // stdin
+				go func(c *websocket.Conn) {
+					_, _, _ = c.ReadMessage() // Consume pings from server.
+				}(conn)
+
+				dones[0] = ws.MirrorRead(conn, args.Stdin)
+			case 1: // stdout
+				// Discard Stdout from remote command if output writer not supplied.
+				if args.Stdout == nil {
+					args.Stdout = io.Discard
+				}
+
+				dones[1] = ws.MirrorWrite(conn, args.Stdout)
+				waitConns++
+			case 2: // stderr
+				// Discard Stderr from remote command if output writer not supplied.
+				if args.Stderr == nil {
+					args.Stderr = io.Discard
+				}
+
+				dones[2] = ws.MirrorWrite(conn, args.Stderr)
+				waitConns++
 			}
-
-			// Discard Stdout from remote command if output writer not supplied.
-			if args.Stdout == nil {
-				args.Stdout = io.Discard
-			}
-
-			conns = append(conns, conn)
-			dones[1] = ws.MirrorWrite(conn, args.Stdout)
-			waitConns++
-		}
-
-		// Handle stderr
-		if fds["2"] != "" {
-			conn, err := r.GetOperationWebsocket(opAPI.ID, fds["2"])
-			if err != nil {
-				return nil, err
-			}
-
-			// Discard Stderr from remote command if output writer not supplied.
-			if args.Stderr == nil {
-				args.Stderr = io.Discard
-			}
-
-			conns = append(conns, conn)
-			dones[2] = ws.MirrorWrite(conn, args.Stderr)
-			waitConns++
 		}
 
 		// Wait for everything to be done
 		go func() {
 			for {
 				select {
-				case <-dones[0]:
+				case <-dones[0]: //nolint:errcheck
 					// Handle stdin finish, but don't wait for it if output channels
 					// have all finished.
 					dones[0] = nil
 					_ = conns[0].Close()
-				case <-dones[1]:
+				case <-dones[1]: //nolint:errcheck
 					dones[1] = nil
 					_ = conns[1].Close()
 					waitConns--
-				case <-dones[2]:
+				case <-dones[2]: //nolint:errcheck
 					dones[2] = nil
 					_ = conns[2].Close()
 					waitConns--
@@ -1611,16 +1657,18 @@ func (r *ProtocolLXD) DeleteInstanceFile(instanceName string, filePath string) e
 	return nil
 }
 
-// rawSFTPConn connects to the apiURL, upgrades to an SFTP raw connection and returns it.
-func (r *ProtocolLXD) rawSFTPConn(apiURL *url.URL) (net.Conn, error) {
+// rawUpgradeConn connects to the apiURL, upgrades the connection to the given protocol and returns it
+// together with the Location header of the response.
+// A non-nil body is sent as JSON.
+func (r *ProtocolLXD) rawUpgradeConn(method string, apiURL *url.URL, protocol string, body any) (net.Conn, string, error) {
 	// Get the HTTP transport.
 	httpTransport, err := r.getUnderlyingHTTPTransport()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	req := &http.Request{
-		Method:     http.MethodGet,
+		Method:     method,
 		URL:        apiURL,
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
@@ -1629,54 +1677,114 @@ func (r *ProtocolLXD) rawSFTPConn(apiURL *url.URL) (net.Conn, error) {
 		Host:       apiURL.Host,
 	}
 
-	req.Header["Upgrade"] = []string{"sftp"}
+	req.Header["Upgrade"] = []string{protocol}
 	req.Header["Connection"] = []string{"Upgrade"}
 
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, "", err
+		}
+
+		// The request is written by hand. Its length must be set for the body to be sent as-is.
+		req.Body = io.NopCloser(bytes.NewReader(data))
+		req.ContentLength = int64(len(data))
+		req.Header.Set("Content-Type", "application/json")
+	}
+
 	r.addClientHeaders(req)
+
+	// Cluster members add the forwarded requestor headers in their Proxy function.
+	// Call Proxy here to add those headers.
+	if httpTransport.Proxy != nil {
+		_, err = httpTransport.Proxy(req)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// The raw dialers do not apply the default port.
+	addr := apiURL.Host
+	if apiURL.Port() == "" {
+		port := "80"
+		if apiURL.Scheme == "https" {
+			port = "443"
+		}
+
+		addr = net.JoinHostPort(apiURL.Hostname(), port)
+	}
 
 	// Establish the connection.
 	var conn net.Conn
 
 	if httpTransport.TLSClientConfig != nil {
-		conn, err = httpTransport.DialTLSContext(context.Background(), "tcp", apiURL.Host)
+		conn, err = httpTransport.DialTLSContext(context.Background(), "tcp", addr)
 	} else {
-		conn, err = httpTransport.DialContext(context.Background(), "tcp", apiURL.Host)
+		conn, err = httpTransport.DialContext(context.Background(), "tcp", addr)
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+
+	revert := revert.New()
+	defer revert.Fail()
+	revert.Add(func() { _ = conn.Close() })
 
 	remoteTCP, _ := tcp.ExtractConn(conn)
 	if remoteTCP != nil {
 		err = tcp.SetTimeouts(remoteTCP, 0)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 
 	err = req.Write(conn)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		_, _, err := lxdParseResponse(resp)
+		_ = resp.Body.Close()
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
+
+		return nil, "", fmt.Errorf("Unexpected status code %d", resp.StatusCode)
 	}
 
-	if resp.Header.Get("Upgrade") != "sftp" {
-		return nil, errors.New("Missing or unexpected Upgrade header in response")
+	if resp.Header.Get("Upgrade") != protocol {
+		return nil, "", errors.New("Missing or unexpected Upgrade header in response")
 	}
 
-	return conn, err
+	revert.Success()
+	return &upgradedConn{Conn: conn, reader: reader}, resp.Header.Get("Location"), nil
+}
+
+// upgradedConn is a connection returned by rawUpgradeConn.
+// After the upgrade, the server can send data before the client does, as an NBD server does when
+// it starts the handshake.
+// Some of that data can already be buffered in the bufio.Reader that parsed the HTTP 101 response.
+// Reads therefore return the buffered bytes first.
+type upgradedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+// Read returns the bytes buffered past the upgrade headers before reading from the connection.
+func (c *upgradedConn) Read(p []byte) (int, error) {
+	if c.reader.Buffered() > 0 {
+		return c.reader.Read(p)
+	}
+
+	return c.Conn.Read(p)
 }
 
 // GetInstanceFileSFTPConn returns a connection to the instance's SFTP endpoint.
@@ -1686,7 +1794,9 @@ func (r *ProtocolLXD) GetInstanceFileSFTPConn(instanceName string) (net.Conn, er
 	apiURL.Path("1.0", "instances", instanceName, "sftp")
 	r.setURLQueryAttributes(&apiURL.URL)
 
-	return r.rawSFTPConn(&apiURL.URL)
+	conn, _, err := r.rawUpgradeConn(http.MethodGet, &apiURL.URL, "sftp", nil)
+
+	return conn, err
 }
 
 // GetInstanceFileSFTP returns an SFTP connection to the instance.
@@ -1710,6 +1820,121 @@ func (r *ProtocolLXD) GetInstanceFileSFTP(instanceName string) (*sftp.Client, er
 	}()
 
 	return client, nil
+}
+
+// GetInstanceSnapshotNBDConn returns a connection to the read-only NBD export of the instance
+// snapshot, which serves the volume snapshots of the given disk devices, or of every device when
+// none is given, each under an export named after its disk device at the time of the snapshot,
+// together with the bitmaps of the snapshot.
+// previousSnapshotUUID limits the bitmaps to the ones created with the instance snapshot of that
+// UUID, and every bitmap of the snapshot is served when it is empty.
+//
+// The returned connection is an NBD connection, on which the server sends the first message of the handshake.
+// Note that it's the caller's responsibility to close the returned connection.
+// The returned string is the URL of the operation representing the export.
+func (r *ProtocolLXD) GetInstanceSnapshotNBDConn(instanceName string, snapshotName string, deviceNames []string, previousSnapshotUUID string) (net.Conn, string, error) {
+	err := r.CheckExtension("storage_volume_block_tracking")
+	if err != nil {
+		return nil, "", err
+	}
+
+	apiURL := api.NewURL()
+	apiURL.URL = r.httpBaseURL // Preload the URL with the client base URL.
+	apiURL.Path("1.0", "instances", instanceName, "snapshots", snapshotName, "nbd")
+	r.setURLQueryAttributes(&apiURL.URL)
+
+	query := apiURL.Query()
+	for _, deviceName := range deviceNames {
+		query.Add("device", deviceName)
+	}
+
+	if previousSnapshotUUID != "" {
+		query.Set("previous_snapshot_uuid", previousSnapshotUUID)
+	}
+
+	apiURL.RawQuery = query.Encode()
+
+	return r.rawUpgradeConn(http.MethodGet, &apiURL.URL, "nbd", nil)
+}
+
+// instanceSnapshotBitmapsPath returns the API path of the bitmaps of an instance snapshot.
+func (r *ProtocolLXD) instanceSnapshotBitmapsPath(instanceName string, snapshotName string) (string, error) {
+	err := r.CheckExtension("storage_volume_block_tracking")
+	if err != nil {
+		return "", err
+	}
+
+	path, _, err := r.instanceTypeToPath(api.InstanceTypeAny)
+	if err != nil {
+		return "", err
+	}
+
+	return path + "/" + url.PathEscape(instanceName) + "/snapshots/" + url.PathEscape(snapshotName) + "/bitmaps", nil
+}
+
+// getInstanceBitmapNames returns the names of the bitmaps at the given bitmaps path.
+func (r *ProtocolLXD) getInstanceBitmapNames(path string) ([]string, error) {
+	// Fetch the raw URL values.
+	urls := []string{}
+	_, err := r.queryStruct(http.MethodGet, path, nil, "", &urls)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse it.
+	return urlsToResourceNames(path, urls...)
+}
+
+// getInstanceBitmaps returns the bitmaps at the given bitmaps path.
+func (r *ProtocolLXD) getInstanceBitmaps(path string) ([]api.InstanceBitmap, error) {
+	bitmaps := []api.InstanceBitmap{}
+	_, err := r.queryStruct(http.MethodGet, path+"?recursion=1", nil, "", &bitmaps)
+	if err != nil {
+		return nil, err
+	}
+
+	return bitmaps, nil
+}
+
+// getInstanceBitmap returns the named bitmap at the given bitmaps path.
+func (r *ProtocolLXD) getInstanceBitmap(path string, bitmapName string) (*api.InstanceBitmap, error) {
+	bitmap := api.InstanceBitmap{}
+	_, err := r.queryStruct(http.MethodGet, path+"/"+url.PathEscape(bitmapName), nil, "", &bitmap)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bitmap, nil
+}
+
+// GetInstanceSnapshotBitmapNames returns the names of the bitmaps of the instance snapshot.
+func (r *ProtocolLXD) GetInstanceSnapshotBitmapNames(instanceName string, snapshotName string) ([]string, error) {
+	path, err := r.instanceSnapshotBitmapsPath(instanceName, snapshotName)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.getInstanceBitmapNames(path)
+}
+
+// GetInstanceSnapshotBitmaps returns the bitmaps of the instance snapshot.
+func (r *ProtocolLXD) GetInstanceSnapshotBitmaps(instanceName string, snapshotName string) ([]api.InstanceBitmap, error) {
+	path, err := r.instanceSnapshotBitmapsPath(instanceName, snapshotName)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.getInstanceBitmaps(path)
+}
+
+// GetInstanceSnapshotBitmap returns the named bitmap of the instance snapshot.
+func (r *ProtocolLXD) GetInstanceSnapshotBitmap(instanceName string, snapshotName string, bitmapName string) (*api.InstanceBitmap, error) {
+	path, err := r.instanceSnapshotBitmapsPath(instanceName, snapshotName)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.getInstanceBitmap(path, bitmapName)
 }
 
 // GetInstanceSnapshotNames returns a list of snapshot names for the instance.
@@ -1807,17 +2032,15 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 
 	// Base request
 	req := api.InstancesPost{
-		Name: cName,
-		InstancePut: api.InstancePut{
-			Architecture: snapshot.Architecture,
-			Config:       snapshot.Config,
-			Devices:      snapshot.Devices,
-			Ephemeral:    snapshot.Ephemeral,
-			Profiles:     snapshot.Profiles,
-		},
+		Name:         cName,
+		Architecture: snapshot.Architecture,
+		Config:       snapshot.Config,
+		Devices:      snapshot.Devices,
+		Ephemeral:    snapshot.Ephemeral,
+		Profiles:     snapshot.Profiles,
 	}
 
-	if snapshot.Stateful && args.Live {
+	if snapshot.Stateful && args != nil && args.Live {
 		err := r.CheckExtension("container_snapshot_stateful_migration")
 		if err != nil {
 			return nil, err
@@ -1919,10 +2142,13 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 	// Source request
 	sourceReq := api.InstanceSnapshotPost{
 		Migration: true,
-		Name:      args.Name,
 	}
 
-	if snapshot.Stateful && args.Live {
+	if args != nil {
+		sourceReq.Name = args.Name
+	}
+
+	if snapshot.Stateful && args != nil && args.Live {
 		sourceReq.Live = args.Live
 	}
 
@@ -2024,7 +2250,7 @@ func (r *ProtocolLXD) CopyInstanceSnapshot(source InstanceServer, instanceName s
 	req.Source.Mode = "pull"
 	req.Source.Operation = opAPI.ID
 	req.Source.Websockets = sourceSecrets
-	req.Source.Certificate = info.Certificate
+	req.Source.Certificate = info.Certificate //nolint:staticcheck
 
 	return r.tryCreateInstance(req, info.Addresses, op)
 }
@@ -2488,6 +2714,10 @@ func (r *ProtocolLXD) CreateInstanceTemplateFile(instanceName string, templateNa
 
 	// Send the request
 	resp, err := r.DoHTTP(req)
+	if err != nil {
+		return err
+	}
+
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
 		_, _, err := lxdParseResponse(resp)
@@ -2495,7 +2725,8 @@ func (r *ProtocolLXD) CreateInstanceTemplateFile(instanceName string, templateNa
 			return err
 		}
 	}
-	return err
+
+	return nil
 }
 
 // DeleteInstanceTemplateFile deletes a template file for a instance.
@@ -2606,7 +2837,7 @@ func (r *ProtocolLXD) ConsoleInstance(instanceName string, console api.InstanceC
 	// And attach stdin and stdout to it
 	go func() {
 		_, writeDone := ws.Mirror(conn, args.Terminal)
-		<-writeDone
+		<-writeDone //nolint:errcheck
 		_ = conn.Close()
 	}()
 
@@ -2708,7 +2939,7 @@ func (r *ProtocolLXD) ConsoleInstanceDynamic(instanceName string, console api.In
 
 		// Attach reader/writer.
 		_, writeDone := ws.Mirror(conn, rwc)
-		<-writeDone
+		<-writeDone //nolint:errcheck
 		_ = conn.Close()
 
 		return nil

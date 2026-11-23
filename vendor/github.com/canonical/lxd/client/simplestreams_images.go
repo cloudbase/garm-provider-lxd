@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -148,7 +149,9 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 	// Download function. Writes to combinedHash during download for fingerprint
 	// validation. On HTTP-to-HTTPS retry, restores the hash to its pre-download
 	// state so that partial data from the failed attempt doesn't corrupt it.
-	download := func(path string, filename string, hash string, target io.WriteSeeker) (int64, error) {
+	// expectedSize is the trusted size from the simplestreams index (fetched over
+	// HTTPS) and caps how many bytes are read from the (possibly untrusted) mirror.
+	download := func(path string, filename string, hash string, target io.WriteSeeker, expectedSize int64) (int64, error) {
 		// Snapshot the combined hash state before this file so we can restore on retry.
 		hashState, err := combinedHash.MarshalBinary()
 		if err != nil {
@@ -166,10 +169,10 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 			return -1, err
 		}
 
-		size, err := shared.DownloadFileHash(context.TODO(), &httpClient, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, hash, sha256.New(), &multiTarget)
+		size, err := shared.DownloadFileHash(context.TODO(), &httpClient, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, hash, sha256.New(), &multiTarget, expectedSize)
 		if err != nil {
-			// Handle cancelation
-			if err.Error() == "net/http: request canceled" {
+			// If the download was canceled, return immediately instead of retrying over HTTPS.
+			if errors.Is(err, context.Canceled) {
 				return -1, err
 			}
 
@@ -185,7 +188,7 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 				return -1, err
 			}
 
-			size, err = shared.DownloadFileHash(context.TODO(), &httpClient, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, hash, sha256.New(), &multiTarget)
+			size, err = shared.DownloadFileHash(context.TODO(), &httpClient, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, hash, sha256.New(), &multiTarget, expectedSize)
 			if err != nil {
 				return -1, err
 			}
@@ -197,13 +200,13 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 	// Download the LXD image file
 	meta, ok := files["meta"]
 	if ok && req.MetaFile != nil {
-		size, err := download(meta.Path, "metadata", meta.Sha256, req.MetaFile)
+		size, err := download(meta.Path, "metadata", meta.Sha256, req.MetaFile, meta.Size)
 		if err != nil {
 			return nil, err
 		}
 
-		parts := strings.Split(meta.Path, "/")
-		resp.MetaName = parts[len(parts)-1]
+		// Basename the server-provided name to prevent path traversal.
+		resp.MetaName = filepath.Base(meta.Path)
 		resp.MetaSize = size
 	}
 
@@ -245,7 +248,7 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 				}
 
 				// Download the delta
-				_, err = download(file.Path, "rootfs delta", file.Sha256, deltaFile)
+				_, err = download(file.Path, "rootfs delta", file.Sha256, deltaFile, file.Size)
 				if err != nil {
 					return nil, err
 				}
@@ -300,8 +303,8 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 					return nil, err
 				}
 
-				parts := strings.Split(rootfs.Path, "/")
-				resp.RootfsName = parts[len(parts)-1]
+				// Basename the server-provided name to prevent path traversal.
+				resp.RootfsName = filepath.Base(rootfs.Path)
 				resp.RootfsSize = size
 				downloaded = true
 
@@ -312,13 +315,13 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 
 		// Download the whole file
 		if !downloaded {
-			size, err := download(rootfs.Path, "rootfs", rootfs.Sha256, req.RootfsFile)
+			size, err := download(rootfs.Path, "rootfs", rootfs.Sha256, req.RootfsFile, rootfs.Size)
 			if err != nil {
 				return nil, err
 			}
 
-			parts := strings.Split(rootfs.Path, "/")
-			resp.RootfsName = parts[len(parts)-1]
+			// Basename the server-provided name to prevent path traversal.
+			resp.RootfsName = filepath.Base(rootfs.Path)
 			resp.RootfsSize = size
 		}
 	}

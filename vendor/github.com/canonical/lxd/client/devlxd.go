@@ -186,13 +186,13 @@ func (r *ProtocolDevLXD) queryStruct(method string, urlPath string, data any, ET
 }
 
 // queryOperation sends a query to the devLXD, then converts the response content into the Operation.
-func (r *ProtocolDevLXD) queryOperation(method string, path string, data any, ETag string) (op DevLXDOperation, etag string, err error) {
+func (r *ProtocolDevLXD) queryOperation(method string, path string, data any, ETag string) (op DevLXDOperation, err error) {
 	var apiOp api.DevLXDOperation
 
 	// Send the query.
-	etag, err = r.queryStruct(method, path, data, ETag, &apiOp)
+	_, err = r.queryStruct(method, path, data, ETag, &apiOp)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	// Setup an Operation wrapper.
@@ -201,7 +201,7 @@ func (r *ProtocolDevLXD) queryOperation(method string, path string, data any, ET
 		r:               r,
 	}
 
-	return op, etag, nil
+	return op, nil
 }
 
 // RawWebsocket allows connection to LXD API websockets over the devLXD.
@@ -242,7 +242,7 @@ func (r *ProtocolDevLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 		HandshakeTimeout: time.Second * 5,
 	}
 
-	// Create client headersfor the websocket request.
+	// Create client headers for the websocket request.
 	headers := http.Header{}
 	headers.Set("User-Agent", r.httpUserAgent)
 
@@ -297,7 +297,7 @@ func devLXDParseResponse(resp *http.Response) (*api.DevLXDResponse, string, erro
 		return nil, "", fmt.Errorf("Failed reading response body from %q: %v", resp.Request.URL.String(), err)
 	}
 
-	// Handel error response.
+	// Handle error response.
 	if resp.StatusCode != http.StatusOK {
 		if len(content) == 0 {
 			return nil, "", api.NewGenericStatusError(resp.StatusCode)

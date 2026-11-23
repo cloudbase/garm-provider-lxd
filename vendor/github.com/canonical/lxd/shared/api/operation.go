@@ -6,14 +6,24 @@ import (
 	"time"
 )
 
-// OperationClassTask represents the Task OperationClass.
-const OperationClassTask = "task"
+const (
+	// OperationClassTask is shown in the [Operation.Class] field when the operation is an asynchronous background task.
+	// These are used in many places where an API request may take a long time.
+	OperationClassTask = "task"
 
-// OperationClassWebsocket represents the Websocket OperationClass.
-const OperationClassWebsocket = "websocket"
+	// OperationClassWebsocket is shown in the [Operation.Class] field when an operation websocket is available for connection.
+	// These are used for various bi-directional connections such as console.
+	OperationClassWebsocket = "websocket"
 
-// OperationClassToken represents the Token OperationClass.
-const OperationClassToken = "token"
+	// OperationClassToken is shown in the [Operation.Class] field for operations that track tokens that have been issued.
+	// These are used to authenticate later requests.
+	OperationClassToken = "token"
+
+	// OperationClassDurable is shown in the [Operation.Class] field for operations that are restarted on the cluster leader
+	// if the member that is running the operation is considered offline (did not respond to cluster heartbeats for longer than
+	// the offline threshold).
+	OperationClassDurable = "durable"
+)
 
 const (
 	// MetadataEntityURL is always set in operation metadata for operations whose associated entity type is not "server".
@@ -79,6 +89,12 @@ type Operation struct {
 	//
 	// API extension: bulk_operations
 	ErrCode int64 `json:"err_code" yaml:"err_code"`
+
+	// Number of child operations.
+	// Example: 2
+	//
+	// API extension: operation_child_count
+	ChildCount int64 `json:"child_count" yaml:"child_count"`
 
 	// Which cluster member this record was found on
 	// Example: lxd01

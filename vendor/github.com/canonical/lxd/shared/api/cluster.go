@@ -9,7 +9,30 @@ import (
 const (
 	// ClusterLinkTypeBidirectional indicates that the cluster link can be used by both clusters.
 	ClusterLinkTypeBidirectional = "bidirectional"
+
+	// ClusterLinkTypeUnidirectional indicates a one-way trust relationship (the remote cluster trusts the cluster where the unidirectional link is defined).
+	//
+	// API extension: cluster_links_unidirectional.
+	ClusterLinkTypeUnidirectional = "unidirectional"
+
+	// ClusterLinkTypePublic indicates that only the local cluster can use the link and no client certificate is presented.
+	//
+	// API extension: cluster_links_public.
+	ClusterLinkTypePublic = "public"
 )
+
+// ClusterLinkTypePresentsClientCertificate reports whether a cluster link of the given type presents
+// a client certificate when connecting to the remote cluster, which is what allows the remote to
+// authenticate the connection. Types are matched explicitly so that an unrecognised type is reported
+// as not presenting one rather than being assumed to.
+func ClusterLinkTypePresentsClientCertificate(clusterLinkType string) bool {
+	switch clusterLinkType {
+	case ClusterLinkTypeBidirectional, ClusterLinkTypeUnidirectional:
+		return true
+	}
+
+	return false
+}
 
 // Cluster represents high-level information about a LXD cluster.
 //
@@ -216,6 +239,18 @@ type ClusterMember struct {
 	Groups []string `json:"groups" yaml:"groups"`
 }
 
+// ClusterMemberFull is a combination of ClusterMember and ClusterMemberState.
+//
+// swagger:model
+//
+// API extension: cluster_members_state_recursion.
+type ClusterMemberFull struct {
+	ClusterMember `yaml:",inline"`
+
+	// State of the cluster member (nil if the member is offline or its state could not be retrieved)
+	State *ClusterMemberState `json:"state" yaml:"state"`
+}
+
 // Writable converts a full Profile struct into a ProfilePut struct (filters read-only fields).
 func (member *ClusterMember) Writable() ClusterMemberPut {
 	return ClusterMemberPut{
@@ -292,11 +327,14 @@ const (
 	// ClusterEvacuateModeAuto indicates that the system should automatically choose the best evacuation method for the instance based on instance type and device capabilities.
 	ClusterEvacuateModeAuto = "auto"
 
-	// ClusterEvacuateModeHeal is used internally to indicate that instances should be evacuated during automatic cluster healing.
-	ClusterEvacuateModeHeal = "heal"
-
 	// ClusterRestoreModeSkip indicates that cluster member status should be restored without starting local instances or migrating back evacuated instances.
 	ClusterRestoreModeSkip = "skip"
+
+	// ClusterMemberActionEvacuate indicates the member should be evacuated.
+	ClusterMemberActionEvacuate = "evacuate"
+
+	// ClusterMemberActionRestore indicates the member should be restored.
+	ClusterMemberActionRestore = "restore"
 )
 
 // ClusterMemberStatePost represents the fields required to evacuate a cluster member.
@@ -316,6 +354,12 @@ type ClusterMemberStatePost struct {
 	//
 	// API extension: clustering_evacuation_mode
 	Mode string `json:"mode" yaml:"mode"`
+
+	// Permit evacuation even if it would drop the cluster below the required voter majority.
+	// Example: false
+	//
+	// API extension: clustering_evacuation_force
+	Force bool `json:"force" yaml:"force"`
 }
 
 // ClusterGroupsPost represents the fields available for a new cluster group.
@@ -418,6 +462,12 @@ type ClusterLink struct {
 	// Cluster link configuration map (refer to doc/clustering.md).
 	// Example: {"user.*": ""}
 	Config map[string]string `json:"config" yaml:"config"`
+
+	// UsedBy is a list of LXD entity URLs that reference the cluster link.
+	// Example: ["/1.0/replicators/my-replicator?project=default"]
+	//
+	// API extension: cluster_links_used_by
+	UsedBy []string `json:"used_by" yaml:"used_by"`
 }
 
 // ClusterLinkPut represents the modifiable fields of a cluster link.
@@ -476,7 +526,8 @@ type ClusterLinksPost struct {
 	//  shortdesc: Type of the cluster link
 
 	// Type of the cluster link.
-	// Currently only "bidirectional" is supported.
+	// Valid types are "bidirectional", "unidirectional" (API extension: cluster_links_unidirectional)
+	// and "public" (API extension: cluster_links_public).
 	// Example: bidirectional
 	Type string `json:"type" yaml:"type"`
 
@@ -491,6 +542,34 @@ type ClusterLinksPost struct {
 	// The certificate (X509 PEM encoded) for the linked cluster. This is included in server-side POST requests to activate the pending cluster link on the linked cluster that generated the trust token.
 	// Example: X509 PEM certificate
 	ClusterCertificate string `json:"cluster_certificate" yaml:"cluster_certificate"`
+
+	// Fingerprint of the remote cluster's certificate, echoed back to confirm a pending public
+	// cluster link. It must match the fingerprint returned when the pending link was created; the
+	// certificate itself is not resubmitted, as the server pins the copy it already holds.
+	// Example: a1b2c3d4...
+	// API extension: cluster_links_public.
+	Fingerprint string `json:"fingerprint,omitempty" yaml:"fingerprint,omitempty"`
+
+	// RemoteAddress is the address of the remote cluster, used for public links. It is the address
+	// contacted when creating a pending public cluster link, and is required for that request only.
+	// Confirming the link pins the address recorded when the pending link was created, so the link
+	// always points at the address that was verified; setting this field on a confirm request is
+	// rejected.
+	// Example: 10.0.0.1:8443
+	RemoteAddress string `json:"remote_address,omitempty" yaml:"remote_address,omitempty"`
+}
+
+// ClusterLinkCertificate represents a remote cluster certificate fetched for user verification.
+// It is returned when creating a pending public cluster link, and its fingerprint must be submitted
+// back as ClusterLinksPost.Fingerprint to confirm and pin the certificate.
+//
+// swagger:model
+//
+// API extension: cluster_links_public.
+type ClusterLinkCertificate struct {
+	// SHA-256 fingerprint of the certificate.
+	// Example: a1b2c3d4...
+	Fingerprint string `json:"fingerprint" yaml:"fingerprint"`
 }
 
 // ClusterLinkPost represents the fields available for renaming a cluster link.

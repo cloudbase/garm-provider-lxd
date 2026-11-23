@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
@@ -22,6 +23,7 @@ type Operation interface {
 	GetWebsocket(secret string) (conn *websocket.Conn, err error)
 	RemoveHandler(target *EventTarget) (err error)
 	Refresh() (err error)
+	URL() *url.URL
 	Wait() (err error)
 	WaitContext(ctx context.Context) error
 }
@@ -83,6 +85,7 @@ type InstanceServer interface {
 	GetMetadataConfiguration() (metadataConfiguration *api.MetadataConfiguration, err error)
 	GetMetrics() (metrics string, err error)
 	GetServer() (server *api.Server, ETag string, err error)
+	GetServerState() (state *api.ServerState, err error)
 	GetServerResources() (resources *api.Resources, err error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
 	HasExtension(extension string) (exists bool)
@@ -169,6 +172,14 @@ type InstanceServer interface {
 	CreateInstanceTemplateFile(instanceName string, templateName string, content io.ReadSeeker) (err error)
 	DeleteInstanceTemplateFile(name string, templateName string) (err error)
 
+	// Instance bitmap functions ("storage_volume_block_tracking" API extension)
+	GetInstanceSnapshotBitmapNames(instanceName string, snapshotName string) (names []string, err error)
+	GetInstanceSnapshotBitmaps(instanceName string, snapshotName string) (bitmaps []api.InstanceBitmap, err error)
+	GetInstanceSnapshotBitmap(instanceName string, snapshotName string, bitmapName string) (bitmap *api.InstanceBitmap, err error)
+
+	// Instance NBD functions ("storage_volume_block_tracking" API extension)
+	GetInstanceSnapshotNBDConn(instanceName string, snapshotName string, deviceNames []string, previousSnapshotUUID string) (conn net.Conn, operationURL string, err error)
+
 	// Event handling functions
 	GetEvents() (listener *EventListener, err error)
 	GetEventsAllProjects() (listener *EventListener, err error)
@@ -187,6 +198,16 @@ type InstanceServer interface {
 	DeleteImageAlias(name string) (err error)
 	GetImagesAllProjects() (images []api.Image, err error)
 	GetImagesAllProjectsWithFilter(filters []string) (images []api.Image, err error)
+
+	// Image registry functions ("image_registries" API extension)
+	GetImageRegistry(name string) (imageRegistry *api.ImageRegistry, ETag string, err error)
+	GetImageRegistryNames() (names []string, err error)
+	GetImageRegistryImages(name string) (images []api.Image, err error)
+	GetImageRegistries() (imageRegistries []api.ImageRegistry, err error)
+	CreateImageRegistry(imageRegistry api.ImageRegistriesPost) (op Operation, err error)
+	UpdateImageRegistry(name string, imageRegistry api.ImageRegistryPut, ETag string) (op Operation, err error)
+	RenameImageRegistry(name string, imageRegistry api.ImageRegistryPost) (op Operation, err error)
+	DeleteImageRegistry(name string) (op Operation, err error)
 
 	// Network functions ("network" API extension)
 	GetNetworkNames() (names []string, err error)
@@ -212,9 +233,15 @@ type InstanceServer interface {
 	GetNetworkLoadBalancerAddresses(networkName string) ([]string, error)
 	GetNetworkLoadBalancers(networkName string) ([]api.NetworkLoadBalancer, error)
 	GetNetworkLoadBalancer(networkName string, listenAddress string) (forward *api.NetworkLoadBalancer, ETag string, err error)
+	GetNetworkLoadBalancerPools(networkName string) (pools []api.NetworkLoadBalancerPool, err error)
+	GetNetworkLoadBalancerPool(networkName string, poolName string) (pool *api.NetworkLoadBalancerPool, ETag string, err error)
+	GetNetworkLoadBalancerPoolState(networkName string, poolName string) (state *api.NetworkLoadBalancerPoolState, err error)
 	CreateNetworkLoadBalancer(networkName string, forward api.NetworkLoadBalancersPost) (op Operation, err error)
+	CreateNetworkLoadBalancerPool(networkName string, pool api.NetworkLoadBalancerPoolsPost) (op Operation, err error)
 	UpdateNetworkLoadBalancer(networkName string, listenAddress string, forward api.NetworkLoadBalancerPut, ETag string) (op Operation, err error)
+	UpdateNetworkLoadBalancerPool(networkName string, poolName string, pool api.NetworkLoadBalancerPoolPut, ETag string) (op Operation, err error)
 	DeleteNetworkLoadBalancer(networkName string, listenAddress string) (op Operation, err error)
+	DeleteNetworkLoadBalancerPool(networkName string, poolName string) (op Operation, err error)
 
 	// Network peer functions ("network_peer" API extension)
 	GetNetworkPeerNames(networkName string) ([]string, error)
@@ -259,6 +286,7 @@ type InstanceServer interface {
 	GetOperations() (operations []api.Operation, err error)
 	GetOperationsAllProjects() (operations []api.Operation, err error)
 	GetOperation(uuid string) (op *api.Operation, ETag string, err error)
+	GetOperationFull(uuid string) (op *api.OperationFull, ETag string, err error)
 	GetOperationWait(uuid string, timeout int) (op *api.Operation, ETag string, err error)
 	GetOperationWaitSecret(uuid string, secret string, timeout int) (op *api.Operation, ETag string, err error)
 	GetOperationWebsocket(uuid string, secret string) (conn *websocket.Conn, err error)
@@ -279,6 +307,7 @@ type InstanceServer interface {
 	GetProjects() (projects []api.Project, err error)
 	GetProject(name string) (project *api.Project, ETag string, err error)
 	GetProjectState(name string) (project *api.ProjectState, err error)
+	UpdateProjectState(name string, state api.ProjectStatePut, force bool) (op Operation, err error)
 	CreateProject(project api.ProjectsPost) (err error)
 	UpdateProject(name string, project api.ProjectPut, ETag string) (err error)
 	RenameProject(name string, project api.ProjectPost) (op Operation, err error)
@@ -353,12 +382,16 @@ type InstanceServer interface {
 	// Storage volume tar import function ("import_custom_volume_tar" API extension)
 	CreateStoragePoolVolumeFromTarball(pool string, args StoragePoolVolumeBackupArgs) (op Operation, err error)
 
+	// Storage volume NBD function ("storage_volume_block_tracking" API extension)
+	GetStoragePoolVolumeNBDConn(pool string, volType string, volName string) (conn net.Conn, operationURL string, err error)
+
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)
 	UpdateCluster(cluster api.ClusterPut, ETag string) (op Operation, err error)
 	DeleteClusterMember(name string, force bool) (err error)
 	GetClusterMemberNames() (names []string, err error)
 	GetClusterMembers() (members []api.ClusterMember, err error)
+	GetClusterMembersFull() (members []api.ClusterMemberFull, err error)
 	GetClusterMember(name string) (member *api.ClusterMember, ETag string, err error)
 	UpdateClusterMember(name string, member api.ClusterMemberPut, ETag string) (err error)
 	RenameClusterMember(name string, member api.ClusterMemberPost) (err error)
@@ -379,6 +412,7 @@ type InstanceServer interface {
 	GetClusterLinkState(name string) (clusterLinkState *api.ClusterLinkState, ETag string, err error)
 	CreateClusterLink(clusterLink api.ClusterLinksPost) (err error)
 	CreateIdentityClusterLinkToken(clusterLink api.ClusterLinksPost) (certificateAddToken *api.CertificateAddToken, err error)
+	CreateClusterLinkPendingPublic(clusterLink api.ClusterLinksPost) (clusterLinkCertificate *api.ClusterLinkCertificate, err error)
 	UpdateClusterLink(name string, clusterLink api.ClusterLinkPut, ETag string) (err error)
 	RenameClusterLink(name string, clusterLink api.ClusterLinkPost) (err error)
 	DeleteClusterLink(name string) (err error)
@@ -414,6 +448,7 @@ type InstanceServer interface {
 	GetIdentities() (identities []api.Identity, err error)
 	GetIdentitiesByAuthenticationMethod(authenticationMethod string) (identities []api.Identity, err error)
 	GetIdentity(authenticationMethod string, nameOrIdentifier string) (identity *api.Identity, ETag string, err error)
+	GetIdentityState(authenticationMethod string, nameOrIdentifier string) (identityState *api.IdentityState, ETag string, err error)
 	GetCurrentIdentityInfo() (identityInfo *api.IdentityInfo, ETag string, err error)
 	UpdateIdentity(authenticationMethod string, nameOrIdentifier string, identityPut api.IdentityPut, ETag string) error
 	DeleteIdentity(authenticationMethod string, nameOrIdentifier string) error
@@ -622,6 +657,11 @@ type ImageCopyArgs struct {
 
 	// List of profiles to apply on the target.
 	Profiles []string
+
+	// Source image registry to use.
+	//
+	// API extension: image_registries
+	ImageRegistry string
 }
 
 // The StoragePoolVolumeCopyArgs struct is used to pass additional options

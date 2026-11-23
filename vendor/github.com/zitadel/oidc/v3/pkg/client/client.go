@@ -2,16 +2,18 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/zitadel/logging"
+	"github.com/google/uuid"
 	"github.com/zitadel/oidc/v3/internal/otel"
 	"golang.org/x/oauth2"
 
@@ -25,6 +27,11 @@ var (
 	Tracer  = otel.Tracer("github.com/zitadel/oidc/pkg/client")
 )
 
+// Deprecated: This interface function Auth() is no longer invoked because it violates
+// RFC 6749 §2.3: The client MUST NOT use more than one authentication method in each request.
+//
+// Configure the OAuth2 endpoint AuthStyle (e.g., oauth2.AuthStyleInHeader)
+// or use the "authFn" parameter in the related functions for custom needs.
 type ClientSecretBasicAuthRequest interface {
 	Auth(req *http.Request)
 }
@@ -48,9 +55,7 @@ func Discover(ctx context.Context, issuer string, httpClient *http.Client, wellK
 	if err != nil {
 		return nil, errors.Join(oidc.ErrDiscoveryFailed, err)
 	}
-	if logger, ok := logging.FromContext(ctx); ok {
-		logger.Debug("discover", "config", discoveryConfig)
-	}
+	slog.DebugContext(ctx, "discover", "config", discoveryConfig)
 
 	if discoveryConfig.Issuer != issuer {
 		return nil, oidc.ErrIssuerInvalid
@@ -64,10 +69,10 @@ type TokenEndpointCaller interface {
 }
 
 func CallTokenEndpoint(ctx context.Context, request any, caller TokenEndpointCaller) (newToken *oauth2.Token, err error) {
-	return callTokenEndpoint(ctx, request, nil, caller)
+	return CallTokenEndpointWithAuthFn(ctx, request, nil, caller)
 }
 
-func callTokenEndpoint(ctx context.Context, request any, authFn any, caller TokenEndpointCaller) (newToken *oauth2.Token, err error) {
+func CallTokenEndpointWithAuthFn(ctx context.Context, request any, authFn any, caller TokenEndpointCaller) (newToken *oauth2.Token, err error) {
 	ctx, span := Tracer.Start(ctx, "callTokenEndpoint")
 	defer span.End()
 
@@ -76,13 +81,20 @@ func callTokenEndpoint(ctx context.Context, request any, authFn any, caller Toke
 		return nil, err
 	}
 
-	if basicAuthRequest, ok := request.(ClientSecretBasicAuthRequest); ok {
-		basicAuthRequest.Auth(req)
-	}
-
-	tokenRes := new(oidc.AccessTokenResponse)
-	if err := httphelper.HttpRequest(caller.HttpClient(), req, &tokenRes); err != nil {
+	var body json.RawMessage
+	if err := httphelper.HttpRequest(caller.HttpClient(), req, &body); err != nil {
 		return nil, err
+	}
+	tokenRes := new(oidc.AccessTokenResponse)
+	if err := json.Unmarshal(body, tokenRes); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal token response: %w", err)
+	}
+	// Keep every field of the response, not only id_token, so callers can read
+	// provider specific values such as refresh_expires_in through Token.Extra,
+	// the same way golang.org/x/oauth2 does for the code exchange.
+	var extra map[string]any
+	if err := json.Unmarshal(body, &extra); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal token response: %w", err)
 	}
 	token := &oauth2.Token{
 		AccessToken:  tokenRes.AccessToken,
@@ -90,12 +102,7 @@ func callTokenEndpoint(ctx context.Context, request any, authFn any, caller Toke
 		RefreshToken: tokenRes.RefreshToken,
 		Expiry:       time.Now().UTC().Add(time.Duration(tokenRes.ExpiresIn) * time.Second),
 	}
-	if tokenRes.IDToken != "" {
-		token = token.WithExtra(map[string]any{
-			"id_token": tokenRes.IDToken,
-		})
-	}
-	return token, nil
+	return token.WithExtra(extra), nil
 }
 
 type EndSessionCaller interface {
@@ -117,16 +124,17 @@ func CallEndSessionEndpoint(ctx context.Context, request any, authFn any, caller
 		return nil, err
 	}
 	client := caller.HttpClient()
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+	cl := *client
+	cl.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	resp, err := client.Do(req)
+	resp, err := cl.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, httphelper.MaxResponseBodySize))
 		if err != nil {
 			return nil, err
 		}
@@ -148,12 +156,19 @@ type RevokeCaller interface {
 }
 
 type RevokeRequest struct {
-	Token         string `schema:"token"`
-	TokenTypeHint string `schema:"token_type_hint"`
-	ClientID      string `schema:"client_id"`
-	ClientSecret  string `schema:"client_secret"`
+	Token               string `schema:"token"`
+	TokenTypeHint       string `schema:"token_type_hint"`
+	ClientID            string `schema:"client_id"`
+	ClientSecret        string `schema:"client_secret,omitempty"`
+	ClientAssertion     string `schema:"client_assertion,omitempty"`
+	ClientAssertionType string `schema:"client_assertion_type,omitempty"`
 }
 
+// Deprecated: This function is no longer invoked because it violates
+// RFC 6749 §2.3: The client MUST NOT use more than one authentication method in each request.
+//
+// Configure the OAuth2 endpoint AuthStyle (e.g., oauth2.AuthStyleInHeader)
+// or use the "authFn" parameter in the related functions for custom needs.
 func (r RevokeRequest) Auth(req *http.Request) {
 	if r.ClientSecret != "" {
 		req.SetBasicAuth(url.QueryEscape(r.ClientID), url.QueryEscape(r.ClientSecret))
@@ -174,15 +189,12 @@ func CallRevokeEndpoint(ctx context.Context, request any, authFn any, caller Rev
 		return err
 	}
 
-	if basicAuthRequest, ok := request.(ClientSecretBasicAuthRequest); ok {
-		basicAuthRequest.Auth(req)
-	}
-
 	client := caller.HttpClient()
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+	cl := *client
+	cl.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	resp, err := client.Do(req)
+	resp, err := cl.Do(req)
 	if err != nil {
 		return err
 	}
@@ -191,7 +203,7 @@ func CallRevokeEndpoint(ctx context.Context, request any, authFn any, caller Rev
 	// "The content of the response body is ignored by the client as all
 	// necessary information is conveyed in the response code."
 	if resp.StatusCode != 200 {
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, httphelper.MaxResponseBodySize))
 		if err == nil {
 			return fmt.Errorf("revoke returned status %d and text: %s", resp.StatusCode, string(body))
 		} else {
@@ -229,6 +241,10 @@ func NewSignerFromPrivateKeyByte(key []byte, keyID string) (jose.Signer, error) 
 }
 
 func SignedJWTProfileAssertion(clientID string, audience []string, expiration time.Duration, signer jose.Signer) (string, error) {
+	jti, err := uuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
 	iat := time.Now()
 	exp := iat.Add(expiration)
 	return crypto.Sign(&oidc.JWTTokenRequest{
@@ -237,6 +253,7 @@ func SignedJWTProfileAssertion(clientID string, audience []string, expiration ti
 		Audience:  audience,
 		ExpiresAt: oidc.FromTime(exp),
 		IssuedAt:  oidc.FromTime(iat),
+		JWTID:     jti.String(),
 	}, signer)
 }
 
@@ -245,20 +262,61 @@ type DeviceAuthorizationCaller interface {
 	HttpClient() *http.Client
 }
 
-func CallDeviceAuthorizationEndpoint(ctx context.Context, request *oidc.ClientCredentialsRequest, caller DeviceAuthorizationCaller, authFn any) (*oidc.DeviceAuthorizationResponse, error) {
+type deviceAuthorizationOptions struct {
+	dpopJKT string
+}
+
+type deviceAuthorizationOption func(*deviceAuthorizationOptions)
+
+func (o deviceAuthorizationOption) apply(options *deviceAuthorizationOptions) {
+	o(options)
+}
+
+// DeviceAuthorizationOption configures a device authorization request.
+//
+// Experimental: OpenID Connect Key Binding 1.0 is a draft standard.
+// This API may change or be removed without a major version bump.
+type DeviceAuthorizationOption interface {
+	apply(*deviceAuthorizationOptions)
+}
+
+// WithDPoPJKT adds the `dpop_jkt` parameter from OpenID Connect Key Binding
+// 1.0, Section 3.1 to a device authorization request.
+//
+// Experimental: OpenID Connect Key Binding 1.0 is a draft standard.
+// This API may change or be removed without a major version bump.
+func WithDPoPJKT(thumbprint string) DeviceAuthorizationOption {
+	return deviceAuthorizationOption(func(options *deviceAuthorizationOptions) {
+		options.dpopJKT = thumbprint
+	})
+}
+
+type deviceAuthorizationRequest struct {
+	*oidc.ClientCredentialsRequest
+	DPoPJKT string `schema:"dpop_jkt,omitempty"`
+}
+
+// CallDeviceAuthorizationEndpoint calls the device authorization endpoint.
+func CallDeviceAuthorizationEndpoint(ctx context.Context, request *oidc.ClientCredentialsRequest, caller DeviceAuthorizationCaller, authFn any, opts ...DeviceAuthorizationOption) (*oidc.DeviceAuthorizationResponse, error) {
 	ctx, span := Tracer.Start(ctx, "CallDeviceAuthorizationEndpoint")
 	defer span.End()
+	options := new(deviceAuthorizationOptions)
+	for _, opt := range opts {
+		opt.apply(options)
+	}
 
 	endpoint := caller.GetDeviceAuthorizationEndpoint()
 	if endpoint == "" {
 		return nil, fmt.Errorf("device authorization %w", ErrEndpointNotSet)
 	}
 
-	req, err := httphelper.FormRequest(ctx, endpoint, request, Encoder, authFn)
+	req, err := httphelper.FormRequest(ctx, endpoint, &deviceAuthorizationRequest{
+		ClientCredentialsRequest: request,
+		DPoPJKT:                  options.dpopJKT,
+	}, Encoder, authFn)
 	if err != nil {
 		return nil, err
 	}
-	request.Auth(req)
 
 	resp := new(oidc.DeviceAuthorizationResponse)
 	if err := httphelper.HttpRequest(caller.HttpClient(), req, &resp); err != nil {
@@ -272,21 +330,26 @@ type DeviceAccessTokenRequest struct {
 	oidc.DeviceAccessTokenRequest
 }
 
+// Deprecated: This function is no longer invoked because it violates
+// RFC 6749 §2.3: The client MUST NOT use more than one authentication method in each request.
+//
+// Configure the OAuth2 endpoint AuthStyle (e.g., oauth2.AuthStyleInHeader)
+// or use the "authFn" parameter in the related functions for custom needs.
 func (r *DeviceAccessTokenRequest) Auth(req *http.Request) {
 	if r.ClientSecret != "" {
 		req.SetBasicAuth(url.QueryEscape(r.ClientID), url.QueryEscape(r.ClientSecret))
 	}
 }
 
-func CallDeviceAccessTokenEndpoint(ctx context.Context, request *DeviceAccessTokenRequest, caller TokenEndpointCaller) (*oidc.AccessTokenResponse, error) {
+// CallDeviceAccessTokenEndpointWithAuthFn calls the device access token endpoint, accepting an authFn for custom authentication.
+func CallDeviceAccessTokenEndpointWithAuthFn(ctx context.Context, request *DeviceAccessTokenRequest, caller TokenEndpointCaller, authFn any) (*oidc.AccessTokenResponse, error) {
 	ctx, span := Tracer.Start(ctx, "CallDeviceAccessTokenEndpoint")
 	defer span.End()
 
-	req, err := httphelper.FormRequest(ctx, caller.TokenEndpoint(), request, Encoder, nil)
+	req, err := httphelper.FormRequest(ctx, caller.TokenEndpoint(), request, Encoder, authFn)
 	if err != nil {
 		return nil, err
 	}
-	request.Auth(req)
 
 	resp := new(oidc.AccessTokenResponse)
 	if err := httphelper.HttpRequest(caller.HttpClient(), req, &resp); err != nil {
@@ -295,7 +358,13 @@ func CallDeviceAccessTokenEndpoint(ctx context.Context, request *DeviceAccessTok
 	return resp, nil
 }
 
-func PollDeviceAccessTokenEndpoint(ctx context.Context, interval time.Duration, request *DeviceAccessTokenRequest, caller TokenEndpointCaller) (*oidc.AccessTokenResponse, error) {
+// Deprecated: Use CallDeviceAccessTokenEndpointWithAuthFn instead.
+func CallDeviceAccessTokenEndpoint(ctx context.Context, request *DeviceAccessTokenRequest, caller TokenEndpointCaller) (*oidc.AccessTokenResponse, error) {
+	return CallDeviceAccessTokenEndpointWithAuthFn(ctx, request, caller, nil)
+}
+
+// PollDeviceAccessTokenEndpointWithAuthFn polls the device access token endpoint, accepting an authFn for custom authentication.
+func PollDeviceAccessTokenEndpointWithAuthFn(ctx context.Context, interval time.Duration, request *DeviceAccessTokenRequest, caller TokenEndpointCaller, authFn any) (*oidc.AccessTokenResponse, error) {
 	ctx, span := Tracer.Start(ctx, "PollDeviceAccessTokenEndpoint")
 	defer span.End()
 
@@ -310,7 +379,7 @@ func PollDeviceAccessTokenEndpoint(ctx context.Context, interval time.Duration, 
 		ctx, cancel := context.WithTimeout(ctx, interval)
 		defer cancel()
 
-		resp, err := CallDeviceAccessTokenEndpoint(ctx, request, caller)
+		resp, err := CallDeviceAccessTokenEndpointWithAuthFn(ctx, request, caller, authFn)
 		if err == nil {
 			return resp, nil
 		}
@@ -331,4 +400,9 @@ func PollDeviceAccessTokenEndpoint(ctx context.Context, interval time.Duration, 
 			return nil, err
 		}
 	}
+}
+
+// Deprecated: Use PollDeviceAccessTokenEndpointWithAuthFn instead.
+func PollDeviceAccessTokenEndpoint(ctx context.Context, interval time.Duration, request *DeviceAccessTokenRequest, caller TokenEndpointCaller) (*oidc.AccessTokenResponse, error) {
+	return PollDeviceAccessTokenEndpointWithAuthFn(ctx, interval, request, caller, nil)
 }

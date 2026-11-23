@@ -46,9 +46,7 @@ type ProtocolLXD struct {
 
 // Disconnect gets rid of any background goroutines.
 func (r *ProtocolLXD) Disconnect() {
-	if r.ctxConnected.Err() != nil {
-		r.ctxConnectedCancel()
-	}
+	r.ctxConnectedCancel()
 }
 
 // GetConnectionInfo returns the basic connection information used to interact with the server.
@@ -435,6 +433,7 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 		TLSClientConfig:  httpTransport.TLSClientConfig,
 		Proxy:            httpTransport.Proxy,
 		HandshakeTimeout: time.Second * 5,
+		Jar:              r.http.Jar,
 	}
 
 	// Create temporary http.Request using the http url, not the ws one, so that we can add the client headers
@@ -443,13 +442,25 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 	r.addClientHeaders(req)
 
 	// Establish the connection
-	conn, resp, err := dialer.Dial(url, req.Header)
+	var conn *websocket.Conn
+	var resp *http.Response
+	if r.oidcClient != nil {
+		conn, resp, err = r.oidcClient.websocketDial(dialer, url, req.Header, r.HasExtension("oidc_scopes"))
+	} else {
+		conn, resp, err = dialer.Dial(url, req.Header)
+	}
+
 	if err != nil {
-		if resp != nil {
-			_, _, err = lxdParseResponse(resp)
+		if resp == nil || !errors.Is(err, websocket.ErrBadHandshake) {
+			return nil, err
 		}
 
-		return nil, err
+		_, _, respErr := lxdParseResponse(resp)
+		if respErr == nil {
+			return nil, fmt.Errorf("Received OK response from server but failed to connect websocket: %w", err)
+		}
+
+		return nil, respErr
 	}
 
 	// Set TCP timeout options.
@@ -481,9 +492,9 @@ func (r *ProtocolLXD) websocket(path string) (*websocket.Conn, error) {
 
 // WithContext returns a client that will add context.Context.
 func (r *ProtocolLXD) WithContext(ctx context.Context) InstanceServer {
-	rr := r
+	rr := *r
 	rr.ctx = ctx
-	return rr
+	return &rr
 }
 
 // getUnderlyingHTTPTransport returns the *http.Transport used by the http client. If the http
@@ -495,16 +506,28 @@ func (r *ProtocolLXD) getUnderlyingHTTPTransport() (*http.Transport, error) {
 	case HTTPTransporter:
 		return t.Transport(), nil
 	default:
-		return nil, fmt.Errorf("Unexpected http.Transport type, %T", r)
+		return nil, fmt.Errorf("Unexpected http.Transport type, %T", t)
 	}
 }
 
 // getSourceImageConnectionInfo returns the connection information for the source image.
 // The returned `info` is nil if the source image is local. In this process, the `instSrc`
 // is also updated with the minimal source fields.
+//
+// If the source image server is not provided, this function simply sets the necessary fields
+// for the `instSrc` for server-side resolution.
 func (r *ProtocolLXD) getSourceImageConnectionInfo(source ImageServer, image api.Image, instSrc *api.InstanceSource) (info *ConnectionInfo, err error) {
 	// Set the minimal source fields
 	instSrc.Type = api.SourceTypeImage
+
+	// If source image server is not provided this means the target server supports image registries.
+	// In this case, we expect a server-side resolution for the image.
+	if source == nil {
+		// Set the fingerprint from the image info.
+		instSrc.Fingerprint = image.Fingerprint
+		instSrc.Alias = ""
+		return nil, nil
+	}
 
 	sameServer, err := r.isSameServer(source)
 	if err != nil {
@@ -538,8 +561,8 @@ func (r *ProtocolLXD) getSourceImageConnectionInfo(source ImageServer, image api
 		return nil, err
 	}
 
-	instSrc.Protocol = info.Protocol
-	instSrc.Certificate = info.Certificate
+	instSrc.Protocol = info.Protocol       //nolint:staticcheck
+	instSrc.Certificate = info.Certificate //nolint:staticcheck
 	instSrc.Project = info.Project
 
 	// Generate secret token if needed
