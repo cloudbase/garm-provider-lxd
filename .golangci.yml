@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+  timeout: 8m
+  build-tags:
+    - testing
+
+linters:
+  default: standard
+  enable:
+    - misspell
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - vendor
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    paths:
+      - vendor

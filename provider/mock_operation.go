@@ -7,12 +7,15 @@ package provider
 
 import (
 	"context"
+	"net/url"
 
 	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 )
+
+var _ lxd.Operation = (*MockOperation)(nil)
 
 type MockOperation struct {
 	mock.Mock
@@ -56,4 +59,10 @@ func (m *MockOperation) Refresh() error {
 func (m *MockOperation) WaitContext(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
+}
+
+func (m *MockOperation) URL() *url.URL {
+	args := m.Called()
+	u, _ := args.Get(0).(*url.URL)
+	return u
 }

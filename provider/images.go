@@ -72,8 +72,11 @@ func (i *image) getInstanceSource(imageName string, imageType config.LXDImageTyp
 			return api.InstanceSource{}, errors.Wrapf(err, "parsing image name: %s", imageName)
 		}
 		instanceSource.Alias = parsedName
-		instanceSource.Server = remote.Address
-		instanceSource.Protocol = string(remote.Protocol)
+		// Server and Protocol are deprecated in favor of ImageRegistry, but
+		// ImageRegistry requires a server side registry and is not supported by
+		// older LXD/Incus servers. Keep using the remote address directly.
+		instanceSource.Server = remote.Address            //nolint:staticcheck // SA1019
+		instanceSource.Protocol = string(remote.Protocol) //nolint:staticcheck // SA1019
 	}
 	return instanceSource, nil
 }
