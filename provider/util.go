@@ -29,8 +29,8 @@ import (
 )
 
 var (
-	//lint:ignore ST1005 imported error from lxd
-	errInstanceIsStopped error = fmt.Errorf("The instance is already stopped")
+	// Must match the error message returned by LXD verbatim.
+	errInstanceIsStopped = fmt.Errorf("The instance is already stopped") //nolint:staticcheck // ST1005: imported error from lxd
 )
 
 var httpResponseErrors = map[int][]error{
@@ -184,7 +184,7 @@ func resolveArchitecture(osArch commonParams.OSArch) (string, error) {
 // device is active
 func (l *LXD) waitInstanceHasIP(ctx context.Context, instanceName string) (commonParams.ProviderInstance, error) {
 	var p commonParams.ProviderInstance
-	var errIPNotFound error = fmt.Errorf("ip not found")
+	errIPNotFound := fmt.Errorf("ip not found")
 	err := retry.Call(retry.CallArgs{
 		Func: func() error {
 			var err error

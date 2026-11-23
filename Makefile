@@ -3,6 +3,7 @@ SHELL := bash
 ROOTDIR=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 GOPATH ?= $(shell go env GOPATH)
 GO ?= go
+GOLANGCI_LINT_VERSION ?= v2.15.0
 
 IMAGE_TAG = garm-provider-build
 
@@ -33,10 +34,10 @@ build-static:
 test: install-lint-deps verify go-test
 
 install-lint-deps:
-	@$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 lint:
-	@golangci-lint run --timeout=8m --build-tags testing
+	@golangci-lint run
 
 go-test:
 	@$(GO) test -race -mod=vendor -tags testing -v $(TEST_ARGS) -timeout=15m -parallel=4 -count=1 ./...

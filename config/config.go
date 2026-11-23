@@ -73,7 +73,7 @@ func NewConfig(cfgFile string) (*LXD, error) {
 // LXD holds connection information for an LXD cluster.
 type LXD struct {
 	// UnixSocket is the path on disk to the LXD unix socket. If defined,
-	// this is prefered over connecting via HTTPs.
+	// this is preferred over connecting via HTTPs.
 	UnixSocket string `toml:"unix_socket_path" json:"unix-socket-path"`
 
 	// Project name is the name of the project in which this runner will create
