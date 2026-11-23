@@ -3,6 +3,8 @@ package version
 import (
 	"os"
 	"strconv"
+
+	"github.com/canonical/lxd/shared/features"
 )
 
 // APIVersion contains the API base version. Only bumped for backward incompatible changes.
@@ -99,7 +101,6 @@ var APIExtensions = []string{
 	"clustering",
 	"event_lifecycle",
 	"storage_api_remote_volume_handling",
-	"nvidia_runtime",
 	"container_mount_propagation",
 	"container_backup",
 	"devlxd_images",
@@ -119,7 +120,6 @@ var APIExtensions = []string{
 	"network_nat_order",
 	"container_full",
 	"backup_compression",
-	"nvidia_runtime_config",
 	"storage_api_volume_snapshots",
 	"storage_unmapped",
 	"projects",
@@ -362,7 +362,6 @@ var APIExtensions = []string{
 	"oidc",
 	"network_ovn_l3only",
 	"ovn_nic_acceleration_vdpa",
-	"cluster_healing",
 	"instances_state_total",
 	"auth_user",
 	"security_csm",
@@ -488,6 +487,45 @@ var APIExtensions = []string{
 	"image_extended_metadata",
 	"cluster_links",
 	"replicators",
+	"event_security",
+	"storage_driver_powerstore",
+	"oidc_device_client_id",
+	"storage_nvme_tcp",
+	"project_replica_mode",
+	"cluster_links_used_by",
+	"network_load_balancer_pool",
+	"clustering_evacuation_force",
+	"gpu_mig_cdi",
+	"cluster_links_unidirectional",
+	"network_load_balancer_pool_health_checks",
+	"operation_child_count",
+	"storage_driver_powerstore_nvme",
+	"access_management_expiry",
+	"cluster_links_public",
+	"durable_operations",
+	"access_management_bearer_pending",
+	"replicator_custom_volumes",
+	"metrics_replicators",
+	"storage_driver_pure_scsifc",
+	"operation_wait_status_code",
+	"vm_volatile_maxcpus",
+	"access_management_identity_effective_groups",
+	"storage_driver_pure_nvmefc",
+	"storage_ceph_replicator",
+	"project_replica_mode_optional",
+	"image_registries",
+	"loki_config_api_check_ready",
+	"server_state",
+	"storage_volume_block_tracking",
+	"cluster_members_state_recursion",
+	"instance_boot_network_family",
+}
+
+func init() {
+	// Only advertise microvm extension when the feature preview is enabled.
+	if features.IsEnabled(features.MicroVM) {
+		APIExtensions = append(APIExtensions, "instance_microvm")
+	}
 }
 
 // APIExtensionsCount returns the number of available API extensions.

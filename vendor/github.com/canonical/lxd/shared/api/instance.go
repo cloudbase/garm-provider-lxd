@@ -24,6 +24,11 @@ const InstanceTypeContainer = InstanceType("container")
 // InstanceTypeVM defines the instance type value for a virtual-machine.
 const InstanceTypeVM = InstanceType("virtual-machine")
 
+// InstanceTypeMicroVM defines the instance type value for a microvm.
+//
+// API extension: instance_microvm.
+const InstanceTypeMicroVM = InstanceType("microvm")
+
 // SourceType represents source of the instance creation.
 type SourceType string
 
@@ -148,6 +153,12 @@ type InstancePost struct {
 	//
 	// API extension: instance_move_config
 	Profiles []string `json:"Profiles" yaml:"profiles"`
+
+	// Which disk volumes are transferred with the instance (migration only)
+	// Example: all-exclusive
+	//
+	// API extension: replicator_custom_volumes
+	DiskVolumesMode string `json:"disk_volumes_mode,omitempty" yaml:"disk_volumes_mode,omitempty"`
 
 	// Whether the instances's snapshot should receive target instances profile on copy
 	// Example: true
@@ -547,20 +558,30 @@ type InstanceSource struct {
 	// Example: ed56997f7c5b48e8d78986d2467a26109be6fb9f2d92e8c7b08eb8b6cec7629a
 	Fingerprint string `json:"fingerprint,omitempty" yaml:"fingerprint,omitempty"`
 
+	// Image registry name
+	// Example: ubuntu
+	//
+	// API extension: image_registries
+	ImageRegistry string `json:"image_registry" yaml:"image_registry"`
+
 	// Image filters (for image source)
 	// Example: {"os": "Ubuntu", "release": "jammy", "variant": "cloud"}
 	Properties map[string]string `json:"properties,omitempty" yaml:"properties,omitempty"`
 
-	// Remote server URL (for remote images)
+	// Remote server URL (for remote images, deprecated, use image_registry)
 	// Example: https://cloud-images.ubuntu.com/releases/
+	//
+	// Deprecated: Use ImageRegistry.
 	Server string `json:"server,omitempty" yaml:"server,omitempty"`
 
 	// Remote server secret (for remote private images)
 	// Example: RANDOM-STRING
 	Secret string `json:"secret,omitempty" yaml:"secret,omitempty"`
 
-	// Protocol name (for remote image)
+	// Protocol name (for remote image, deprecated, use image_registry)
 	// Example: simplestreams
+	//
+	// Deprecated: Use ImageRegistry.
 	Protocol string `json:"protocol,omitempty" yaml:"protocol,omitempty"`
 
 	// Base image fingerprint (for faster migration)
@@ -629,6 +650,12 @@ type InstanceSource struct {
 	//
 	// API extension: override_snapshot_profiles_on_copy
 	OverrideSnapshotProfiles bool `json:"override_snapshot_profiles" yaml:"override_snapshot_profiles"`
+
+	// Which disk volumes the migration transfers with the instance (for migration)
+	// Example: all-exclusive
+	//
+	// API extension: replicator_custom_volumes
+	DiskVolumesMode string `json:"disk_volumes_mode,omitempty" yaml:"disk_volumes_mode,omitempty"`
 }
 
 // InstanceUEFIVars represents the UEFI variables of a LXD virtual machine.

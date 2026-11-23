@@ -110,6 +110,23 @@ func (r *ProtocolLXD) GetClusterMembers() ([]api.ClusterMember, error) {
 	return members, nil
 }
 
+// GetClusterMembersFull returns the current members of the cluster including their state.
+func (r *ProtocolLXD) GetClusterMembersFull() ([]api.ClusterMemberFull, error) {
+	err := r.CheckExtension("cluster_members_state_recursion")
+	if err != nil {
+		return nil, err
+	}
+
+	members := []api.ClusterMemberFull{}
+	u := api.NewURL().Path("cluster", "members").WithQuery("recursion", "2")
+	_, err = r.queryStruct(http.MethodGet, u.String(), nil, "", &members)
+	if err != nil {
+		return nil, err
+	}
+
+	return members, nil
+}
+
 // GetClusterMember returns information about the given member.
 func (r *ProtocolLXD) GetClusterMember(name string) (*api.ClusterMember, string, error) {
 	err := r.CheckExtension("clustering")
@@ -223,8 +240,15 @@ func (r *ProtocolLXD) UpdateClusterMemberState(name string, state api.ClusterMem
 		return nil, err
 	}
 
-	if state.Action != "" {
+	if state.Action == api.ClusterMemberActionRestore && state.Mode == api.ClusterRestoreModeSkip {
 		err = r.CheckExtension("clustering_restore_skip_mode")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if state.Action == api.ClusterMemberActionEvacuate && state.Force {
+		err = r.CheckExtension("clustering_evacuation_force")
 		if err != nil {
 			return nil, err
 		}
@@ -413,6 +437,13 @@ func (r *ProtocolLXD) CreateClusterLink(clusterLink api.ClusterLinksPost) error 
 		return err
 	}
 
+	if clusterLink.Type == api.ClusterLinkTypePublic {
+		err = r.CheckExtension("cluster_links_public")
+		if err != nil {
+			return err
+		}
+	}
+
 	_, _, err = r.query(http.MethodPost, api.NewURL().Path("cluster", "links").String(), clusterLink, "")
 	if err != nil {
 		return err
@@ -435,6 +466,24 @@ func (r *ProtocolLXD) CreateIdentityClusterLinkToken(clusterLink api.ClusterLink
 	}
 
 	return &token, nil
+}
+
+// CreateClusterLinkPendingPublic creates a pending public cluster link and returns the remote cluster's
+// certificate fingerprint for user verification. The fingerprint must be resubmitted via
+// CreateClusterLink to confirm and pin the certificate, activating the link.
+func (r *ProtocolLXD) CreateClusterLinkPendingPublic(clusterLink api.ClusterLinksPost) (*api.ClusterLinkCertificate, error) {
+	err := r.CheckExtension("cluster_links_public")
+	if err != nil {
+		return nil, err
+	}
+
+	var cert api.ClusterLinkCertificate
+	_, err = r.queryStruct(http.MethodPost, api.NewURL().Path("cluster", "links").String(), clusterLink, "", &cert)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cert, nil
 }
 
 // UpdateClusterLink updates a cluster link.

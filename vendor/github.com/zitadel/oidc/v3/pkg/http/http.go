@@ -26,8 +26,10 @@ type Encoder interface {
 	Encode(src any, dst map[string][]string) error
 }
 
-type FormAuthorization func(url.Values)
-type RequestAuthorization func(*http.Request)
+type (
+	FormAuthorization    func(url.Values)
+	RequestAuthorization func(*http.Request)
+)
 
 func AuthorizeBasic(user, password string) RequestAuthorization {
 	return func(req *http.Request) {
@@ -40,7 +42,7 @@ func FormRequest(ctx context.Context, endpoint string, request any, encoder Enco
 	if err := encoder.Encode(request, form); err != nil {
 		return nil, err
 	}
-	if fn, ok := authFn.(FormAuthorization); ok {
+	if fn, ok := authFn.(FormAuthorization); ok && fn != nil {
 		fn(form)
 	}
 	body := strings.NewReader(form.Encode())
@@ -48,7 +50,7 @@ func FormRequest(ctx context.Context, endpoint string, request any, encoder Enco
 	if err != nil {
 		return nil, err
 	}
-	if fn, ok := authFn.(RequestAuthorization); ok {
+	if fn, ok := authFn.(RequestAuthorization); ok && fn != nil {
 		fn(req)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -62,9 +64,9 @@ func HttpRequest(client *http.Client, req *http.Request, response any) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodySize+1))
 	if err != nil {
-		return fmt.Errorf("unable to read response body: %v", err)
+		return fmt.Errorf("unable to read response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -76,9 +78,13 @@ func HttpRequest(client *http.Client, req *http.Request, response any) error {
 		return &oidcErr
 	}
 
+	if int64(len(body)) > MaxResponseBodySize {
+		return ErrResponseBodyTooLarge
+	}
+
 	err = json.Unmarshal(body, response)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal response: %v %s", err, body)
+		return fmt.Errorf("failed to unmarshal response: %w %s", err, body)
 	}
 	return nil
 }
@@ -92,8 +98,8 @@ func URLEncodeParams(resp any, encoder Encoder) (url.Values, error) {
 	return values, nil
 }
 
-func StartServer(ctx context.Context, port string) {
-	server := &http.Server{Addr: port}
+func StartServer(ctx context.Context, address string) {
+	server := &http.Server{Addr: address}
 	go func() {
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("ListenAndServe(): %v", err)

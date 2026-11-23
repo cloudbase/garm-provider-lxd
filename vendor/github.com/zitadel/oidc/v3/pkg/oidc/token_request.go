@@ -94,6 +94,16 @@ func (a *AccessTokenRequest) SetClientSecret(clientSecret string) {
 	a.ClientSecret = clientSecret
 }
 
+// IsSetClientAssertion implements op.AuthenticatedTokenRequestAuthMethodChecker
+func (a *AccessTokenRequest) IsSetClientAssertion() bool {
+	return a.ClientAssertion != "" && a.ClientAssertionType != ""
+}
+
+// IsSetClientIDAndClientSecret implements op.AuthenticatedTokenRequestAuthMethodChecker
+func (a *AccessTokenRequest) IsSetClientIDAndClientSecret() bool {
+	return a.ClientID != "" && a.ClientSecret != ""
+}
+
 // RefreshTokenRequest is not useful for making refresh requests because the
 // grant_type is not included explicitly but rather implied.
 type RefreshTokenRequest struct {
@@ -119,6 +129,16 @@ func (a *RefreshTokenRequest) SetClientSecret(clientSecret string) {
 	a.ClientSecret = clientSecret
 }
 
+// IsSetClientAssertion implements op.AuthenticatedTokenRequestAuthMethodChecker
+func (a *RefreshTokenRequest) IsSetClientAssertion() bool {
+	return a.ClientAssertion != "" && a.ClientAssertionType != ""
+}
+
+// IsSetClientIDAndClientSecret implements op.AuthenticatedTokenRequestAuthMethodChecker
+func (a *RefreshTokenRequest) IsSetClientIDAndClientSecret() bool {
+	return a.ClientID != "" && a.ClientSecret != ""
+}
+
 type JWTTokenRequest struct {
 	Issuer    string              `json:"iss"`
 	Subject   string              `json:"sub"`
@@ -126,6 +146,7 @@ type JWTTokenRequest struct {
 	Audience  Audience            `json:"aud"`
 	IssuedAt  Time                `json:"iat"`
 	ExpiresAt Time                `json:"exp"`
+	JWTID     string              `json:"jti,omitempty"`
 
 	private map[string]any
 }
@@ -141,6 +162,11 @@ func (j *JWTTokenRequest) MarshalJSON() ([]byte, error) {
 
 	if len(j.private) == 0 {
 		return b, nil
+	}
+
+	// jti is omitted when empty, so merging would keep a parsed value.
+	if j.JWTID == "" {
+		delete(j.private, "jti")
 	}
 
 	err = json.Unmarshal(b, &j.private)
@@ -241,11 +267,16 @@ type ClientCredentialsRequest struct {
 	GrantType           GrantType           `schema:"grant_type,omitempty"`
 	Scope               SpaceDelimitedArray `schema:"scope"`
 	ClientID            string              `schema:"client_id"`
-	ClientSecret        string              `schema:"client_secret"`
+	ClientSecret        string              `schema:"client_secret,omitempty"`
 	ClientAssertion     string              `schema:"client_assertion,omitempty"`
 	ClientAssertionType string              `schema:"client_assertion_type,omitempty"`
 }
 
+// Deprecated: This function is no longer invoked because it violates
+// RFC 6749 §2.3: The client MUST NOT use more than one authentication method in each request.
+//
+// Configure the OAuth2 endpoint AuthStyle (e.g., oauth2.AuthStyleInHeader)
+// or use the "authFn" parameter in the related functions for custom needs.
 func (r *ClientCredentialsRequest) Auth(req *http.Request) {
 	if r.ClientSecret != "" {
 		req.SetBasicAuth(url.QueryEscape(r.ClientID), url.QueryEscape(r.ClientSecret))

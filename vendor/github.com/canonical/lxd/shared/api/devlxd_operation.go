@@ -17,4 +17,10 @@ type DevLXDOperation struct {
 	// Operation error message
 	// Example: Some error message
 	Err string `json:"err" yaml:"err"`
+
+	// Operation error code
+	// Example: 423
+	//
+	// API extension: operation_wait_status_code
+	ErrCode int64 `json:"err_code" yaml:"err_code"`
 }

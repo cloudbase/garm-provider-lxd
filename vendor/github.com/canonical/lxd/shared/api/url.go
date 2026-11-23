@@ -50,25 +50,31 @@ func (u *URL) Path(pathParts ...string) *URL {
 	return u
 }
 
-// Project sets the "project" query parameter in the URL if the projectName is not empty or "default".
+// Project sets the "project" query parameter in the URL based on the input project name.
+// If the input project name is empty or "default", then no project query parameter is set (and any existing are deleted).
 func (u *URL) Project(projectName string) *URL {
+	queryArgs := u.Query()
 	if projectName != "default" && projectName != "" {
-		queryArgs := u.Query()
-		queryArgs.Add("project", projectName)
-		u.RawQuery = queryArgs.Encode()
+		queryArgs.Set("project", projectName)
+	} else {
+		queryArgs.Del("project")
 	}
 
+	u.RawQuery = queryArgs.Encode()
 	return u
 }
 
-// Target sets the "target" query parameter in the URL if the clusterMemberName is not empty or "none".
+// Target sets the "target" query parameter in the URL based on the input cluster member name.
+// If the input cluster member name is empty or "none", then no target parameter is set (and any existing are deleted).
 func (u *URL) Target(clusterMemberName string) *URL {
+	queryArgs := u.Query()
 	if clusterMemberName != "" && clusterMemberName != "none" {
-		queryArgs := u.Query()
-		queryArgs.Add("target", clusterMemberName)
-		u.RawQuery = queryArgs.Encode()
+		queryArgs.Set("target", clusterMemberName)
+	} else {
+		queryArgs.Del("target")
 	}
 
+	u.RawQuery = queryArgs.Encode()
 	return u
 }
 

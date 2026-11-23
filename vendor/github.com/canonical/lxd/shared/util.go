@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/flosch/pongo2"
+	"github.com/robfig/cron/v3"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/cancel"
@@ -510,7 +511,7 @@ func FileMove(oldPath string, newPath string) error {
 }
 
 // FileCopy copies a file, overwriting the target if it exists.
-func FileCopy(source string, dest string) error {
+func FileCopy(source string, dest string) (err error) {
 	fi, err := os.Lstat(source)
 	if err != nil {
 		return err
@@ -524,11 +525,9 @@ func FileCopy(source string, dest string) error {
 			return err
 		}
 
-		if PathExists(dest) {
-			err = os.Remove(dest)
-			if err != nil {
-				return err
-			}
+		err = os.Remove(dest)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
 
 		err = os.Symlink(target, dest)
@@ -562,6 +561,13 @@ func FileCopy(source string, dest string) error {
 		}
 	}
 
+	defer func() {
+		closeErr := d.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
+
 	_, err = io.Copy(d, s)
 	if err != nil {
 		return err
@@ -575,7 +581,7 @@ func FileCopy(source string, dest string) error {
 		}
 	}
 
-	return d.Close()
+	return nil
 }
 
 // DirCopy copies a directory recursively, overwriting the target if it exists.
@@ -594,20 +600,20 @@ func DirCopy(source string, dest string) error {
 	if PathExists(dest) {
 		err := os.RemoveAll(dest)
 		if err != nil {
-			return fmt.Errorf("failed removing destination directory %s: %w", dest, err)
+			return fmt.Errorf("failed removing destination directory %q: %w", dest, err)
 		}
 	}
 
 	// Create dest.
 	err = os.MkdirAll(dest, info.Mode())
 	if err != nil {
-		return fmt.Errorf("failed creating destination directory %s: %w", dest, err)
+		return fmt.Errorf("failed creating destination directory %q: %w", dest, err)
 	}
 
 	// Copy all files.
 	entries, err := os.ReadDir(source)
 	if err != nil {
-		return fmt.Errorf("failed reading source directory %s: %w", source, err)
+		return fmt.Errorf("failed reading source directory %q: %w", source, err)
 	}
 
 	for _, entry := range entries {
@@ -617,12 +623,12 @@ func DirCopy(source string, dest string) error {
 		if entry.IsDir() {
 			err := DirCopy(sourcePath, destPath)
 			if err != nil {
-				return fmt.Errorf("failed copying sub-directory from %s to %s: %w", sourcePath, destPath, err)
+				return fmt.Errorf("failed copying sub-directory from %q to %q: %w", sourcePath, destPath, err)
 			}
 		} else {
 			err := FileCopy(sourcePath, destPath)
 			if err != nil {
-				return fmt.Errorf("failed copying file from %s to %s: %w", sourcePath, destPath, err)
+				return fmt.Errorf("failed copying file from %q to %q: %w", sourcePath, destPath, err)
 			}
 		}
 	}
@@ -650,63 +656,6 @@ func IsSnapshot(name string) bool {
 	return strings.Contains(name, SnapshotDelimiter)
 }
 
-// MkdirAllOwner creates a directory named path, along with any necessary parents, and with specified
-// permissions. It sets the ownership of the created directories to the provided uid and gid.
-func MkdirAllOwner(path string, perm os.FileMode, uid int, gid int) error {
-	// This function is a slightly modified version of MkdirAll from the Go standard library.
-	// https://golang.org/src/os/path.go?s=488:535#L9
-
-	// Fast path: if we can tell whether path is a directory or file, stop with success or error.
-	dir, err := os.Stat(path)
-	if err == nil {
-		if dir.IsDir() {
-			return nil
-		}
-
-		return errors.New("path exists but is not a directory")
-	}
-
-	// Slow path: make sure parent exists and then call Mkdir for path.
-	i := len(path)
-	for i > 0 && os.IsPathSeparator(path[i-1]) { // Skip trailing path separator.
-		i--
-	}
-
-	j := i
-	for j > 0 && !os.IsPathSeparator(path[j-1]) { // Scan backward over element.
-		j--
-	}
-
-	if j > 1 {
-		// Create parent
-		err = MkdirAllOwner(path[0:j-1], perm, uid, gid)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Parent now exists; invoke Mkdir and use its result.
-	err = os.Mkdir(path, perm)
-
-	errChown := os.Chown(path, uid, gid)
-	if errChown != nil {
-		return errChown
-	}
-
-	if err != nil {
-		// Handle arguments like "foo/." by
-		// double-checking that directory doesn't exist.
-		dir, err1 := os.Lstat(path)
-		if err1 == nil && dir.IsDir() {
-			return nil
-		}
-
-		return err
-	}
-
-	return nil
-}
-
 // HasKey returns true if map has key.
 func HasKey[K comparable, V any](key K, m map[K]V) bool {
 	_, found := m[key]
@@ -730,11 +679,10 @@ func StringPrefixInSlice(key string, list []string) bool {
 // The input slice is cloned to avoid modifying the original slice.
 func RemoveElementsFromSlice[T comparable](list []T, elements ...T) []T {
 	list = slices.Clone(list)
-	for i := len(elements) - 1; i >= 0; i-- {
-		element := elements[i]
+	for i, element := range slices.Backward(elements) {
 		match := false
-		for j := len(list) - 1; j >= 0; j-- {
-			if element == list[j] {
+		for j, l := range slices.Backward(list) {
+			if element == l {
 				match = true
 				list = slices.Delete(list, j, j+1)
 				break
@@ -1195,7 +1143,15 @@ func EscapePathFstab(path string) string {
 // optionally verifying the file's hash using the provided hash function. The function
 // either returns the number of bytes written or an error if the download fails or the
 // hash does not match.
-func DownloadFileHash(ctx context.Context, httpClient *http.Client, useragent string, progress func(progress ioprogress.ProgressData), canceler *cancel.HTTPRequestCanceller, filename string, url string, hash string, hashFunc hash.Hash, target io.WriteSeeker) (int64, error) {
+//
+// expectedSize bounds how many bytes are read from the response body: a value of zero or
+// greater caps the body at exactly that many bytes using [io.LimitReader] (for example the
+// size published in a simplestreams index fetched over HTTPS), while a negative value such
+// as -1 disables the cap and reads to EOF. Capping prevents a malicious or man-in-the-middle
+// mirror from streaming unbounded data: reads stop exactly at expectedSize, so any oversized
+// stream is truncated and then fails the hash check. The untrusted HTTP Content-Length header
+// is never used to size this cap.
+func DownloadFileHash(ctx context.Context, httpClient *http.Client, useragent string, progress func(progress ioprogress.ProgressData), canceler *cancel.HTTPRequestCanceller, filename string, url string, hash string, hashFunc hash.Hash, target io.WriteSeeker, expectedSize int64) (int64, error) {
 	// Always seek to the beginning
 	_, _ = target.Seek(0, io.SeekStart)
 
@@ -1230,8 +1186,22 @@ func DownloadFileHash(ctx context.Context, httpClient *http.Client, useragent st
 		return -1, fmt.Errorf("Cannot fetch %s: %s", url, r.Status)
 	}
 
+	// Cap the number of bytes read from the response body to the trusted expected size.
+	// A negative expectedSize (for example -1) disables the cap and reads the body to EOF.
+	// This deliberately ignores the untrusted Content-Length header so that the limit holds
+	// even for chunked transfers where no Content-Length is present.
+	bodyReader := r.Body
+	progressLength := r.ContentLength
+	if expectedSize >= 0 {
+		// io.LimitReader caps the read at expectedSize bytes (a zero size yields an empty
+		// read). The underlying r.Body is still closed by the deferred close above; the
+		// NopCloser only preserves the io.ReadCloser interface for the progress reader.
+		bodyReader = io.NopCloser(io.LimitReader(r.Body, expectedSize))
+		progressLength = expectedSize
+	}
+
 	// Handle the data
-	body := ioprogress.NewProgressReader(r.Body, ioprogress.WithLength(r.ContentLength), ioprogress.WithDescriptiveProgressHandler(filename, progress))
+	body := ioprogress.NewProgressReader(bodyReader, ioprogress.WithLength(progressLength), ioprogress.WithDescriptiveProgressHandler(filename, progress))
 
 	var size int64
 
@@ -1562,4 +1532,24 @@ func ShellQuote(in string) string {
 	// Replace ' with '\'' which translates to:
 	// [End literal string] + [Escaped single quote] + [Start new literal string]
 	return `'` + strings.ReplaceAll(in, `'`, `'\''`) + `'`
+}
+
+// CronSpecIsActiveThisMinute returns true if the next job on the cron schedule ticked over in the last minute.
+// E.g. If the cron specifies that a job should run every hour at 30 minutes past the hour, then this function
+// returns true if the given time is between 30 and 31 minutes past the hour.
+// This is used for tasks that run every minute and check if they have tasks to run according to a cron schedule.
+func CronSpecIsActiveThisMinute(spec string, now time.Time) (bool, error) {
+	sched, err := cron.ParseStandard(spec)
+	if err != nil {
+		return false, fmt.Errorf("Could not parse cron %q: %w", spec, err)
+	}
+
+	// We want to check if the cron spec indicates that a job should be run at the start of this minute, so truncate.
+	now = now.Truncate(time.Minute)
+
+	// Calculate the next scheduled job based on this minute minus one second.
+	next := sched.Next(now.Add(-time.Second))
+
+	// If this minute is equal to the time of the next job, the cron spec is active.
+	return now.Equal(next), nil
 }

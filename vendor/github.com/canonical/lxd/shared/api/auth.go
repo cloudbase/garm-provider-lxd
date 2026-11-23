@@ -48,11 +48,20 @@ const (
 	// IdentityTypeBearerTokenDevLXD represents an identity that bears a LXD token that can be used to interact with the DevLXD API.
 	IdentityTypeBearerTokenDevLXD = "DevLXD token bearer"
 
+	// IdentityTypeBearerTokenDevLXDPending represents a DevLXD token bearer identity for which no token is currently issued, because none has been issued yet or the most recent one was revoked.
+	IdentityTypeBearerTokenDevLXDPending = "DevLXD token bearer (pending)"
+
 	// IdentityTypeBearerTokenClient represents an identity that bears a LXD token that can be used to interact with the LXD API.
 	IdentityTypeBearerTokenClient = "Client token bearer"
 
+	// IdentityTypeBearerTokenClientPending represents a client token bearer identity for which no token is currently issued, because none has been issued yet or the most recent one was revoked.
+	IdentityTypeBearerTokenClientPending = "Client token bearer (pending)"
+
 	// IdentityTypeBearerTokenInitialUI is the identity type used for initial connection to LXD via the UI when conventional authentication is not yet configured.
 	IdentityTypeBearerTokenInitialUI = "Initial UI token bearer"
+
+	// IdentityTypeBearerTokenInitialUIPending represents an initial UI token bearer identity for which no token is currently issued, because none has been issued yet or the most recent one was revoked.
+	IdentityTypeBearerTokenInitialUIPending = "Initial UI token bearer (pending)"
 
 	// IdentityTypeCertificateClusterLink represents cluster links that authenticate using TLS and whose permissions are managed via group ownership.
 	IdentityTypeCertificateClusterLink = "Cluster link certificate"
@@ -112,6 +121,14 @@ type Identity struct {
 	//
 	// API extension: access_management_tls.
 	TLSCertificate string `json:"tls_certificate" yaml:"tls_certificate"`
+
+	// ExpiresAt is the expiration time of the credential belonging to the identity. For TLS identities this is the
+	// expiry of the certificate, and for bearer identities it is the expiry of the most recently issued token.
+	// It is unset for identities whose credential has no expiry, that have no credential yet (pending identities),
+	// or whose token has been revoked.
+	//
+	// API extension: access_management_expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 }
 
 // Writable converts a Identity struct into a IdentityPut struct (filters read-only fields).
@@ -126,6 +143,32 @@ func (i Identity) Writable() IdentityPut {
 func (i *Identity) SetWritable(put IdentityPut) {
 	i.Groups = put.Groups
 	i.TLSCertificate = put.TLSCertificate
+}
+
+// IdentityState has the effective group membership.
+//
+// swagger:model
+//
+// API extension: access_management_identity_effective_groups.
+type IdentityState struct {
+	// Effective groups is the combined and deduplicated list of LXD groups that the identity is a direct member of, and
+	// the LXD groups that the identity is an effective member of via identity provider group mappings.
+	// Example: ["foo", "bar"]
+	EffectiveGroups []string `json:"effective_groups" yaml:"effective_groups"`
+}
+
+// IdentityFull expands an Identity to include effective group membership.
+//
+// swagger:model
+//
+// API extension: access_management_identity_effective_groups.
+type IdentityFull struct {
+	Identity `yaml:",inline"`
+
+	// Effective groups is the combined and deduplicated list of LXD groups that the identity is a direct member of, and
+	// the LXD groups that the identity is an effective member of via identity provider group mappings.
+	// Example: ["foo", "bar"]
+	EffectiveGroups []string `json:"effective_groups" yaml:"effective_groups"`
 }
 
 // IdentityInfo expands an Identity to include effective group membership and effective permissions.
@@ -149,10 +192,6 @@ type IdentityInfo struct {
 	// FineGrained is a boolean indicating whether the identity is fine-grained,
 	// meaning that permissions are managed via group membership.
 	FineGrained bool `json:"fine_grained" yaml:"fine_grained"`
-
-	// ExpiresAt is the expiration time of the credential used to authenticate the caller.
-	// It is set only when client is trusted, and authentication method is either bearer or TLS.
-	ExpiresAt *time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 }
 
 // IdentityPut contains the editable fields of an IdentityInfo.
@@ -165,7 +204,7 @@ type IdentityPut struct {
 	// Example: ["foo", "bar"]
 	Groups []string `json:"groups" yaml:"groups"`
 
-	// TLSCertificate is a base64 encoded x509 certificate. This can only be set if the authentication method of the identity is AuthenticationMethodTLS.
+	// TLSCertificate is a PEM encoded x509 certificate. This can only be set if the authentication method of the identity is AuthenticationMethodTLS.
 	//
 	// API extension: access_management_tls.
 	TLSCertificate string `json:"tls_certificate" yaml:"tls_certificate"`

@@ -54,8 +54,6 @@ func (r *ProtocolLXD) UpdateServer(server api.ServerPut, ETag string) error {
 }
 
 // HasExtension returns true if the server supports a given API extension.
-//
-// Deprecated: Use CheckExtension instead.
 func (r *ProtocolLXD) HasExtension(extension string) bool {
 	// If no cached API information, just assume we're good
 	// This is needed for those rare cases where we must avoid a GetServer call
@@ -96,6 +94,23 @@ func (r *ProtocolLXD) GetServerResources() (*api.Resources, error) {
 	}
 
 	return &resources, nil
+}
+
+// GetServerState returns the current state of a given LXD server.
+func (r *ProtocolLXD) GetServerState() (*api.ServerState, error) {
+	err := r.CheckExtension("server_state")
+	if err != nil {
+		return nil, err
+	}
+
+	state := api.ServerState{}
+
+	_, err = r.queryStruct(http.MethodGet, "/state", nil, "", &state)
+	if err != nil {
+		return nil, err
+	}
+
+	return &state, nil
 }
 
 // UseProject returns a client that will use a specific project.
